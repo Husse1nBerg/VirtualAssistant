@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.db
+*.db-journal
+
+# Environment and secrets — never commit
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+*.pem
+secrets/
+
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.claude/
+.cursor/

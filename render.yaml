@@ -1,0 +1,44 @@
+# Render Blueprint — deploy with "New > Blueprint" in Render dashboard
+services:
+  - type: web
+    name: virtual-assistant
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npx prisma generate && npm run build && npx prisma db push
+    startCommand: node dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '3000'
+      - key: BASE_URL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: USE_OPENAI_FOR_AGENT
+        value: 'true'
+      - key: OWNER_PHONE_NUMBER
+        sync: false
+      - key: OWNER_WHATSAPP_NUMBER
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: TTS_PROVIDER
+        value: deepgram
+      - key: DATABASE_URL
+        value: file:./data/assistant.db
+      - key: LOG_LEVEL
+        value: info
+    disk:
+      name: assistant-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1

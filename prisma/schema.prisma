@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model CallLog {
+  id               String   @id @default(uuid())
+  twilioCallSid    String   @unique
+  fromNumber       String
+  toNumber         String
+  direction        String   @default("inbound")
+  status           String   @default("in-progress") // in-progress | completed | failed | voicemail
+  startedAt        DateTime @default(now())
+  endedAt          DateTime?
+  durationSeconds  Int?
+
+  // Structured outcomes
+  callerName       String?
+  company          String?
+  reasonForCall    String?
+  urgency          String?  // low | medium | high
+  callbackWindow   String?
+  promisedActions  String?  // JSON string array
+  confidenceScore  Float?
+  summary          String?
+
+  // Metrics
+  sttLatencyMs     Int?
+  llmLatencyMs     Int?
+  ttsLatencyMs     Int?
+  usedFallback     Boolean  @default(false)
+
+  // Relations
+  transcripts      Transcript[]
+  notifications    NotificationLog[]
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Transcript {
+  id         String   @id @default(uuid())
+  callLogId  String
+  callLog    CallLog  @relation(fields: [callLogId], references: [id])
+  role       String   // caller | assistant | system
+  content    String
+  timestamp  DateTime @default(now())
+
+  createdAt  DateTime @default(now())
+}
+
+model NotificationLog {
+  id         String   @id @default(uuid())
+  callLogId  String
+  callLog    CallLog  @relation(fields: [callLogId], references: [id])
+  channel    String   // sms | whatsapp
+  recipient  String
+  status     String   // sent | failed | pending
+  messageId  String?  // Twilio message SID
+  error      String?
+  sentAt     DateTime?
+
+  createdAt  DateTime @default(now())
+}
