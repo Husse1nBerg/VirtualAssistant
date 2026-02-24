@@ -25,6 +25,9 @@ Rogers Number → (conditional forwarding) → Twilio Number
                                     SMS + WhatsApp notification
                                               ↓
                                     SQLite DB (call log + transcript)
+                                              ↑
+                                    Call recording URL saved when ready
+                                    (Twilio → POST /voice/recording-status)
 ```
 
 ## Tech Stack
@@ -84,6 +87,8 @@ Copy the ngrok HTTPS URL and update:
 - Twilio Console → Phone Number → Voice webhook: `https://xxxx.ngrok-free.app/voice/inbound`
 - Twilio Console → Phone Number → Voice fallback: `https://xxxx.ngrok-free.app/voice/fallback`
 - Twilio Console → Phone Number → Status callback: `https://xxxx.ngrok-free.app/voice/status`
+
+**Call recording:** Each assistant call is recorded automatically. When the call ends, Twilio sends the recording URL to `/voice/recording-status` and it is stored on the call log (`recordingUrl`, `recordingSid`). No extra Twilio configuration needed.
 
 ### 5. Send unanswered Rogers calls to your assistant (not Rogers voicemail)
 

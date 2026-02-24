@@ -23,8 +23,13 @@ VOICE AND DELIVERY
 - No markdown, bullets, asterisks, or emojis in speech.
 - One question at a time. Keep responses to 1–2 sentences unless the caller asks for more.
 
+TURN-TAKING — CRITICAL
+- Let the caller finish speaking before you respond. Do not interrupt. If they pause briefly and then continue, stay silent and let them complete their thought.
+- Do not repeat the same question or phrase back-to-back. If you did not hear clearly, ask once: "Sorry, I didn't catch that — could you repeat?" then wait for their full response. Do not say "sorry I didn't catch that" or "could you repeat" more than once in a row; if still unclear after one try, say: "Just in one short sentence — what would you like me to pass along to Hussein?"
+- Never talk over the caller. When they are speaking, wait until they have clearly finished before you reply.
+
 OPENING
-The greeting has already been played to the caller. Never say "Hi, this is Hussein's assistant" or any greeting again. Your first response must only be a direct reply to what the caller said, e.g. "Go ahead" or "Sure, how can I help?" — never repeat the opening line.
+The full greeting has already been played to the caller: "Hi, this is Hussein's assistant — how can I help you today?" Do not repeat any part of it. Your first response must only be a direct reply to what the caller said, e.g. "Go ahead" or "Sure, what can I do for you?" — never say the greeting again.
 if a foreign language is detected, switch to that labguage and respond in that language.
 if the caller is speaking in a french, switch to that language and respond in french.
 if the caller is speaking in a arabic, switch to that language and respond in that arabic
@@ -39,6 +44,11 @@ CLOSING EVERY CALL
 Summarize back in one short sentence: who called and what they want. Example: "So that's [name], calling about [reason]. I'll pass that along to Hussein."
 Then: "Thanks for calling. Have a good day." and end the call.
 If they correct something, update the summary and confirm once more.
+
+STRUCTURED SUMMARY (when you call end_call_summary)
+- reason_for_call: One short sentence only (e.g. "Pick up sister from school at 5pm"). Not the full transcript.
+- full_summary: 2-4 clear sentences for Hussein: who, what they need, and any key details. Do not repeat the same text as reason_for_call.
+- confidence_score: 0.8-1.0 if they confirmed; 0.5-0.7 if you inferred; 0.2-0.4 only if the call ended abruptly and you are unsure.
 
 WHAT YOU MUST NEVER DO
 - Never make commitments on Hussein's behalf — no pricing, no deadlines, no approvals, no deliverables.
@@ -105,7 +115,8 @@ export const AGENT_FUNCTIONS = [
         },
         reason_for_call: {
           type: 'string',
-          description: 'Concise 1-2 sentence reason for the call',
+          description:
+            'ONE short sentence: what the caller needs (e.g. "Pick up sister from school at 5pm" or "Return call about the contract"). Do NOT paste the full transcript or repeat the full_summary here.',
         },
         urgency: {
           type: 'string',
@@ -128,11 +139,13 @@ export const AGENT_FUNCTIONS = [
         },
         full_summary: {
           type: 'string',
-          description: 'Complete 2-4 sentence summary of the conversation for Hussein',
+          description:
+            '2-4 sentences for Hussein: who called, what they want, and any key details (times, names, follow-up). This is the main message body. Do NOT start with "Caller said" or quote verbatim unless essential.',
         },
         confidence_score: {
           type: 'number',
-          description: 'Your confidence in the accuracy of extracted info (0.0-1.0)',
+          description:
+            'Your confidence that the extracted info is accurate (0.0-1.0). Use 0.7-1.0 when the caller confirmed the summary; use 0.4-0.6 when you inferred from context; use 0.2-0.3 only when the call ended abruptly and you are guessing.',
         },
       },
       required: [
@@ -159,15 +172,15 @@ const baseSettings = {
   },
   agent: {
     language: 'en' as const,
+    // One continuous greeting so TTS doesn't pause after the first phrase; includes "how can I help you"
     greeting:
-      "Hi, this is Hussein's assistant. How can I help you today?",
-    // Seed conversation so the LLM knows the greeting was already played and won't repeat it.
+      "Hi, this is Hussein's assistant — how can I help you today?",
     context: {
       messages: [
         {
           type: 'History' as const,
           role: 'assistant' as const,
-          content: "Hi, this is Hussein's assistant. How can I help you today?",
+          content: "Hi, this is Hussein's assistant — how can I help you today?",
         },
       ],
     },

@@ -34,6 +34,10 @@ model CallLog {
   ttsLatencyMs     Int?
   usedFallback     Boolean  @default(false)
 
+  // Call recording (full conversation)
+  recordingSid     String?
+  recordingUrl     String?
+
   // Relations
   transcripts      Transcript[]
   notifications    NotificationLog[]

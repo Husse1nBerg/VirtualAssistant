@@ -353,12 +353,12 @@ async function endCall(session: CallSession, status: string): Promise<void> {
       summary: summary.summary,
     });
 
-    // Send SMS + WhatsApp notifications
+    // Send summary/transcript immediately so the user gets it even if Twilio callbacks fail or are slow.
     await sendPostCallNotifications(summary, session.callId, session.fromNumber);
-
+    // Recording (link or MMS) is sent separately when Twilio calls /voice/recording-status.
     log.info(
       { callId: session.callId, durationSeconds, urgency: summary.urgency },
-      'Call completed and notifications sent'
+      'Call completed; summary sent; recording will be sent when ready'
     );
   } catch (err) {
     log.error({ callId: session.callId, err }, 'Error during call wrap-up');
@@ -381,18 +381,22 @@ function buildFallbackSummary(session: CallSession): CallSummary {
     .filter((t) => t.role === 'caller')
     .map((t) => t.content);
 
-  const fullTranscript = callerParts.join(' ');
+  const fullTranscript = callerParts.join(' ').replace(/\s+/g, ' ').trim();
+  const firstSentence = fullTranscript.split(/[.!?]+/)[0]?.trim() || '';
+  const shortReason = firstSentence.length > 0 && firstSentence.length <= 120
+    ? firstSentence
+    : fullTranscript.slice(0, 80).trim() + (fullTranscript.length > 80 ? '…' : '');
 
   return {
     caller_name: null,
     company: null,
-    reason_for_call: fullTranscript.slice(0, 200) || 'Caller did not state reason — review transcript',
+    reason_for_call: shortReason || 'Caller did not state reason — review transcript',
     urgency: 'medium',
     callback_window: null,
     promised_actions: ['Review transcript and return call'],
     confidence_score: 0.2,
     summary: fullTranscript
-      ? `Caller said: "${fullTranscript.slice(0, 300)}". Call ended before structured summary could be captured.`
+      ? fullTranscript.slice(0, 400) + (fullTranscript.length > 400 ? '…' : '')
       : 'Call ended with no caller speech detected. Possible hang-up or wrong number.',
   };
 }

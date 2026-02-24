@@ -4,8 +4,21 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { getCallLogBySid, updateCallLog } from '../services/database';
+import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog } from '../services/notification';
+import { getTwilioClient } from '../services/twilioClient';
 
 const router = Router();
+
+/** Start recording an in-progress call; callback URL receives RecordingUrl when done. */
+async function startCallRecording(callSid: string): Promise<void> {
+  const env = getEnv();
+  const callbackUrl = `${env.BASE_URL}/voice/recording-status`;
+  await getTwilioClient().calls(callSid).recordings.create({
+    recordingStatusCallback: callbackUrl,
+    recordingStatusCallbackEvent: ['completed'],
+  });
+  getLogger().info({ callSid }, 'Call recording started');
+}
 
 /**
  * POST /voice/inbound
@@ -34,6 +47,11 @@ router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
     stream.parameter({ name: 'to', value: to });
     stream.parameter({ name: 'callSid', value: callSid });
 
+    // Start call recording (full conversation). Callback will save recording URL to call log.
+    startCallRecording(callSid).catch((err) =>
+      log.warn({ err, callSid }, 'Failed to start call recording')
+    );
+
     return res.send(twiml.toString());
   } catch (err) {
     log.error({ err, requestId: req.requestId }, 'Inbound handler error — redirecting to fallback');
@@ -47,6 +65,34 @@ router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
     }
     return res.send(twiml.toString());
   }
+});
+
+/**
+ * POST /voice/recording-status
+ * Twilio callback when call recording is ready. Saves recording URL to call log.
+ */
+router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Response) => {
+  const log = getLogger();
+  const callSid = req.body.CallSid;
+  const recordingSid = req.body.RecordingSid;
+  const recordingUrl = req.body.RecordingUrl;
+
+  log.info({ callSid, recordingSid, recordingUrl }, 'Call recording ready');
+
+  try {
+    const callLog = await getCallLogBySid(callSid);
+    if (callLog) {
+      await updateCallLog(callLog.id, { recordingSid, recordingUrl });
+      // Summary was already sent when the call ended; send recording only (link or MMS)
+      sendRecordingOnlyNotification(callLog.id, recordingUrl).catch((err) =>
+        log.error({ callSid, err }, 'Failed to send recording notification')
+      );
+    }
+  } catch (err) {
+    log.error({ callSid, err }, 'Failed to save recording URL to call log');
+  }
+
+  res.sendStatus(200);
 });
 
 /**
@@ -70,6 +116,20 @@ router.post('/status', twilioWebhookAuth, async (req: Request, res: Response) =>
         durationSeconds: duration ? parseInt(duration, 10) : undefined,
         endedAt: callStatus === 'completed' ? new Date() : undefined,
       });
+      // If call completed, fallback: send summary-only SMS if recording never arrives (e.g. after 90s)
+      if (callStatus === 'completed') {
+        setTimeout(async () => {
+          try {
+            const log = await getCallLogBySid(callSid);
+            if (log && !log.recordingUrl) {
+              getLogger().info({ callSid }, 'No recording received; sending summary only');
+              await sendSummaryOnlyFromCallLog(log);
+            }
+          } catch (e) {
+            getLogger().error({ callSid, err: e }, 'Fallback summary send failed');
+          }
+        }, 90_000);
+      }
     }
   } catch (err) {
     log.error({ callSid, err }, 'Failed to update call status');
