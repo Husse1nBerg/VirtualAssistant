@@ -84,11 +84,20 @@ ngrok http 3000
 
 Copy the ngrok HTTPS URL and update:
 - `.env` → `BASE_URL=https://xxxx.ngrok-free.app`
-- Twilio Console → Phone Number → Voice webhook: `https://xxxx.ngrok-free.app/voice/inbound`
-- Twilio Console → Phone Number → Voice fallback: `https://xxxx.ngrok-free.app/voice/fallback`
-- Twilio Console → Phone Number → Status callback: `https://xxxx.ngrok-free.app/voice/status`
+- Twilio Console → [Phone Numbers](https://console.twilio.com/us1/develop/phone-numbers/manage/incoming) → your number → **Voice**:
+  - **A CALL COMES IN**: `https://xxxx.ngrok-free.app/voice/inbound`
+  - **Status callback URL**: `https://xxxx.ngrok-free.app/voice/status` ← required for call-completed and 90s fallback
+  - **Primary handler fails**: `https://xxxx.ngrok-free.app/voice/fallback`
 
-**Call recording:** Each assistant call is recorded automatically. When the call ends, Twilio sends the recording URL to `/voice/recording-status` and it is stored on the call log (`recordingUrl`, `recordingSid`). No extra Twilio configuration needed.
+**Current ngrok host (copy these if using that subdomain):**
+```
+A CALL COMES IN:     https://perorational-kenia-pantheistical.ngrok-free.dev/voice/inbound
+Status callback:     https://perorational-kenia-pantheistical.ngrok-free.dev/voice/status
+Primary fails:       https://perorational-kenia-pantheistical.ngrok-free.dev/voice/fallback
+```
+Your `.env` already has `BASE_URL=https://perorational-kenia-pantheistical.ngrok-free.dev`.
+
+**Call recording:** Each assistant call is recorded automatically. When the call ends, Twilio sends the recording URL to `/voice/recording-status` and a second SMS is sent with the recording (MMS or link). If you don't receive it, ensure `BASE_URL` in `.env` is your current public URL (e.g. ngrok) so Twilio can reach the recording-status webhook.
 
 ### 5. Send unanswered Rogers calls to your assistant (not Rogers voicemail)
 

@@ -3,7 +3,7 @@ import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
-import { getCallLogBySid, updateCallLog } from '../services/database';
+import { getCallLogBySid, getCallLogById, updateCallLog } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog } from '../services/notification';
 import { getTwilioClient } from '../services/twilioClient';
 
@@ -123,7 +123,16 @@ router.post('/status', twilioWebhookAuth, async (req: Request, res: Response) =>
             const log = await getCallLogBySid(callSid);
             if (log && !log.recordingUrl) {
               getLogger().info({ callSid }, 'No recording received; sending summary only');
-              await sendSummaryOnlyFromCallLog(log);
+              const withTranscripts = await getCallLogById(log.id);
+              if (withTranscripts) {
+                await sendSummaryOnlyFromCallLog({
+                  ...withTranscripts,
+                  transcripts: withTranscripts.transcripts?.map((t) => ({
+                    role: t.role,
+                    content: t.content,
+                  })),
+                });
+              }
             }
           } catch (e) {
             getLogger().error({ callSid, err: e }, 'Fallback summary send failed');

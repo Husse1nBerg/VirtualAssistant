@@ -353,8 +353,13 @@ async function endCall(session: CallSession, status: string): Promise<void> {
       summary: summary.summary,
     });
 
-    // Send summary/transcript immediately so the user gets it even if Twilio callbacks fail or are slow.
-    await sendPostCallNotifications(summary, session.callId, session.fromNumber);
+    // Send summary + line-by-line transcript (Caller/Agent) immediately.
+    await sendPostCallNotifications(
+      summary,
+      session.callId,
+      session.fromNumber,
+      session.transcriptParts
+    );
     // Recording (link or MMS) is sent separately when Twilio calls /voice/recording-status.
     log.info(
       { callId: session.callId, durationSeconds, urgency: summary.urgency },

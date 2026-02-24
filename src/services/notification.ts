@@ -4,7 +4,10 @@ import { createNotification } from './database';
 import type { CallSummary } from './claude';
 import { getTwilioClient } from './twilioClient';
 
-// Call log shape needed for formatting (from DB)
+// Transcript line for display (caller or assistant)
+export type TranscriptLine = { role: string; content: string };
+
+// Call log shape needed for formatting (from DB); transcripts optional for fallback path
 type CallLogForNotification = {
   id: string;
   fromNumber: string;
@@ -16,9 +19,23 @@ type CallLogForNotification = {
   promisedActions: string | null;
   confidenceScore: number | null;
   summary: string | null;
+  transcripts?: Array<{ role: string; content: string }>;
 };
 
 // ── Format Summary Message ───────────────────────────
+
+/** Format transcript parts as line-by-line "Caller: ..." / "Agent: ..." */
+function formatTranscriptLines(parts: TranscriptLine[]): string {
+  if (!parts.length) return '';
+  return parts
+    .map((p) => {
+      const label = p.role === 'caller' ? 'Caller' : 'Agent';
+      const text = (p.content || '').trim().replace(/\n/g, ' ');
+      return text ? `${label}: ${text}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
 
 /** Prefer one message block: show summary; only add reason if it adds info (short tagline vs longer summary). */
 function dedupeReasonAndSummary(reason: string | null, summary: string | null): string {
@@ -36,7 +53,12 @@ function dedupeReasonAndSummary(reason: string | null, summary: string | null): 
   return s;
 }
 
-function formatSummaryMessage(summary: CallSummary, _callLogId: string, callerNumber: string): string {
+function formatSummaryMessage(
+  summary: CallSummary,
+  _callLogId: string,
+  callerNumber: string,
+  transcriptParts?: TranscriptLine[]
+): string {
   const urgencyEmoji =
     summary.urgency === 'high' ? '🔴' : summary.urgency === 'medium' ? '🟡' : '🟢';
   const message = dedupeReasonAndSummary(summary.reason_for_call, summary.summary);
@@ -56,6 +78,13 @@ function formatSummaryMessage(summary: CallSummary, _callLogId: string, callerNu
       ? `Actions: ${summary.promised_actions.join('; ')}`
       : null,
   ];
+
+  const transcriptBlock = transcriptParts?.length
+    ? formatTranscriptLines(transcriptParts)
+    : '';
+  if (transcriptBlock) {
+    lines.push(``, `Transcript:`, transcriptBlock);
+  }
 
   return lines.filter(Boolean).join('\n');
 }
@@ -85,6 +114,12 @@ function formatSummaryFromCallLog(callLog: CallLogForNotification): string {
     actions.length > 0 ? `Actions: ${actions.join('; ')}` : null,
   ];
 
+  const transcriptBlock =
+    callLog.transcripts?.length ? formatTranscriptLines(callLog.transcripts) : '';
+  if (transcriptBlock) {
+    lines.push(``, `Transcript:`, transcriptBlock);
+  }
+
   return lines.filter(Boolean).join('\n');
 }
 
@@ -93,11 +128,12 @@ function formatSummaryFromCallLog(callLog: CallLogForNotification): string {
 export async function sendPostCallNotifications(
   summary: CallSummary,
   callLogId: string,
-  callerNumber: string
+  callerNumber: string,
+  transcriptParts?: TranscriptLine[]
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
-  const message = formatSummaryMessage(summary, callLogId, callerNumber);
+  const message = formatSummaryMessage(summary, callLogId, callerNumber, transcriptParts);
 
   // Always send SMS
   await sendSMS(message, callLogId, env.OWNER_PHONE_NUMBER);
