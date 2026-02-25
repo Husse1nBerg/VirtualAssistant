@@ -1,6 +1,6 @@
 # Virtual Assistant — AI Voice Missed-Call Handler
 
-Production-grade missed-call AI voice assistant. When calls to your Rogers number go unanswered, they forward to Twilio where an AI assistant (powered by Claude) has a natural conversation with the caller, extracts structured information, and sends you a summary via SMS/WhatsApp.
+Production-grade missed-call AI voice assistant. When calls to your Rogers/Bell number go unanswered, they forward to Twilio where an AI assistant (powered by Claude) has a natural conversation with the caller, extracts structured information, and sends you a summary via SMS
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Rogers Number → (conditional forwarding) → Twilio Number
                                               ↓
                                     Call ends → Summary extracted
                                               ↓
-                                    SMS + WhatsApp notification
+                                          SMS notification
                                               ↓
                                     SQLite DB (call log + transcript)
                                               ↑
@@ -135,6 +135,15 @@ Result: when someone calls your Rogers number and you don’t answer, the call w
 
 - Turn no-answer forwarding off (e.g. `*93` or MyRogers).
 - Turn voicemail back on in MyRogers or by calling Rogers.
+
+**iPhone users – turn off Live Voicemail**
+
+If you use an **iPhone** with your Rogers number, Apple’s **Live Voicemail** can take the call before it ever reaches Rogers forwarding. Even with Rogers voicemail disabled and no-answer forwarding set, the call may go to Live Voicemail instead of your Twilio assistant.
+
+- On the iPhone: **Settings → Phone → Live Voicemail** → turn **Live Voicemail** off (uncheck).
+- **Restart the iPhone** after changing this so the setting takes effect.
+
+After that, unanswered calls should forward to your Twilio number and your AI assistant will answer.
 
 ### 6. Twilio trial: bypass “press any key” and get SMS/WhatsApp
 
