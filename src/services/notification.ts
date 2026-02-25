@@ -24,10 +24,41 @@ type CallLogForNotification = {
 
 // ── Format Summary Message ───────────────────────────
 
-/** Format transcript parts as line-by-line "Caller: ..." / "Agent: ..." */
+/** Strip echo: caller lines that match or are contained in the previous agent line (agent voice picked up as "caller"). */
+function filterEchoFromTranscript(parts: TranscriptLine[]): TranscriptLine[] {
+  const out: TranscriptLine[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    const text = (p.content || '').trim();
+    if (p.role === 'caller' && text && i > 0) {
+      const prev = parts[i - 1];
+      const callerLower = text.toLowerCase();
+      if (prev.role === 'assistant') {
+        const prevText = (prev.content || '').trim().toLowerCase();
+        const isEcho =
+          prevText === callerLower ||
+          prevText.includes(callerLower) ||
+          callerLower.includes(prevText) ||
+          (callerLower.length >= 5 && prevText.includes(callerLower.slice(0, Math.min(15, callerLower.length))));
+        if (isEcho) continue;
+      }
+      const lastAgent = out.slice().reverse().find((x) => x.role === 'assistant');
+      if (lastAgent) {
+        const lastAgentLower = (lastAgent.content || '').trim().toLowerCase();
+        if (lastAgentLower && (lastAgentLower === callerLower || lastAgentLower.includes(callerLower) || callerLower.includes(lastAgentLower)))
+          continue;
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+/** Format transcript parts as line-by-line "Caller: ..." / "Agent: ..." (echo filtered out). */
 function formatTranscriptLines(parts: TranscriptLine[]): string {
   if (!parts.length) return '';
-  return parts
+  const filtered = filterEchoFromTranscript(parts);
+  return filtered
     .map((p) => {
       const label = p.role === 'caller' ? 'Caller' : 'Agent';
       const text = (p.content || '').trim().replace(/\n/g, ' ');
@@ -150,22 +181,24 @@ export async function sendPostCallNotifications(
 
 /**
  * Sends only the recording (MMS or link) — use when summary was already sent at call end.
+ * Uses a proxy link so the recipient can open the recording without Twilio Basic Auth.
  */
 export async function sendRecordingOnlyNotification(
   callLogId: string,
-  recordingUrl: string
+  _recordingUrl: string
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
   const to = env.OWNER_PHONE_NUMBER;
-  const bodyWithLink = `📞 Call recording: ${recordingUrl}`;
-
+  const recordingLink = `${env.BASE_URL}/voice/recording/${callLogId}`;
+  const bodyWithLink = `📞 Call recording: ${recordingLink}`;
+  const statusCallback = `${env.BASE_URL}/sms/status`;
   try {
     const msg = await getTwilioClient().messages.create({
       body: bodyWithLink,
       from: env.TWILIO_PHONE_NUMBER,
       to,
-      mediaUrl: [recordingUrl],
+      statusCallback,
     });
     await createNotification({
       callLogId,
@@ -175,10 +208,9 @@ export async function sendRecordingOnlyNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId, messageSid: msg.sid }, 'Recording sent via MMS');
+    log.info({ callLogId, messageSid: msg.sid }, 'Recording link sent via SMS');
   } catch (err: unknown) {
-    log.warn({ callLogId, err }, 'MMS failed, sending recording link via SMS');
-    await sendSMS(bodyWithLink, callLogId, to);
+    log.error({ callLogId, err }, 'Failed to send recording SMS');
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
@@ -192,22 +224,24 @@ export async function sendRecordingOnlyNotification(
 /**
  * Sends one SMS (and optionally WhatsApp) with summary + recording link (or MMS with audio).
  * Use when recording is ready and summary was NOT already sent (e.g. 90s fallback path).
+ * Recording link is a proxy URL so the recipient can open it without Twilio Basic Auth.
  */
 export async function sendCombinedCallNotification(
   callLog: CallLogForNotification,
-  recordingUrl: string
+  _recordingUrl: string
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
   const summaryText = formatSummaryFromCallLog(callLog);
-  const combinedBody = `${summaryText}\n\n📞 Recording: ${recordingUrl}`;
-
+  const recordingLink = `${env.BASE_URL}/voice/recording/${callLog.id}`;
+  const combinedBody = `${summaryText}\n\n📞 Recording: ${recordingLink}`;
+  const statusCallback = `${env.BASE_URL}/sms/status`;
   try {
     const msg = await getTwilioClient().messages.create({
       body: combinedBody,
       from: env.TWILIO_PHONE_NUMBER,
       to: env.OWNER_PHONE_NUMBER,
-      mediaUrl: [recordingUrl],
+      statusCallback,
     });
     await createNotification({
       callLogId: callLog.id,
@@ -217,11 +251,9 @@ export async function sendCombinedCallNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId: callLog.id, messageSid: msg.sid }, 'Combined summary + recording sent via MMS');
+    log.info({ callLogId: callLog.id, messageSid: msg.sid }, 'Combined summary + recording link sent via SMS');
   } catch (err: unknown) {
-    const code = (err as { code?: number })?.code;
-    log.warn({ callLogId: callLog.id, code, err }, 'MMS failed, sending summary + link via SMS');
-    await sendSMS(combinedBody, callLog.id, env.OWNER_PHONE_NUMBER);
+    log.error({ callLogId: callLog.id, err }, 'Failed to send combined summary SMS');
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
@@ -251,12 +283,14 @@ export async function sendSummaryOnlyFromCallLog(callLog: CallLogForNotification
 async function sendSMS(body: string, callLogId: string, to: string): Promise<void> {
   const log = getLogger();
   const env = getEnv();
+  const statusCallback = `${env.BASE_URL}/sms/status`;
 
   try {
     const msg = await getTwilioClient().messages.create({
       body,
       from: env.TWILIO_PHONE_NUMBER,
       to,
+      statusCallback,
     });
 
     await createNotification({
@@ -298,12 +332,14 @@ async function sendWhatsApp(body: string, callLogId: string, to: string): Promis
   const fromNumber = env.TWILIO_WHATSAPP_FROM || env.TWILIO_PHONE_NUMBER;
   const whatsappTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
   const whatsappFrom = `whatsapp:${fromNumber}`;
+  const statusCallback = `${env.BASE_URL}/sms/status`;
 
   try {
     const msg = await getTwilioClient().messages.create({
       body,
       from: whatsappFrom,
       to: whatsappTo,
+      statusCallback,
     });
 
     await createNotification({

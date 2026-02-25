@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import { Router, Request, Response } from 'express';
 import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
@@ -5,20 +6,44 @@ import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { getCallLogBySid, getCallLogById, updateCallLog } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog } from '../services/notification';
-import { getTwilioClient } from '../services/twilioClient';
 
 const router = Router();
 
-/** Start recording an in-progress call; callback URL receives RecordingUrl when done. */
-async function startCallRecording(callSid: string): Promise<void> {
+/**
+ * GET /voice/recording/:callLogId
+ * Proxies the Twilio recording so the link works without Basic Auth.
+ * Twilio's RecordingUrl requires Account SID + Auth Token; we fetch with server credentials and stream.
+ */
+router.get('/recording/:callLogId', async (req: Request, res: Response) => {
+  const log = getLogger();
+  const { callLogId } = req.params;
   const env = getEnv();
-  const callbackUrl = `${env.BASE_URL}/voice/recording-status`;
-  await getTwilioClient().calls(callSid).recordings.create({
-    recordingStatusCallback: callbackUrl,
-    recordingStatusCallbackEvent: ['completed'],
-  });
-  getLogger().info({ callSid }, 'Call recording started');
-}
+
+  const callLog = await getCallLogById(callLogId);
+  if (!callLog?.recordingUrl) {
+    log.warn({ callLogId }, 'Recording proxy: call log not found or no recording');
+    return res.status(404).send('Recording not found');
+  }
+
+  const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+  try {
+    const twilioRes = await fetch(callLog.recordingUrl!, {
+      headers: { Authorization: `Basic ${auth}` },
+      redirect: 'follow',
+    });
+    if (!twilioRes.ok) {
+      log.warn({ callLogId, status: twilioRes.status }, 'Twilio recording fetch failed');
+      return res.status(502).send('Could not load recording');
+    }
+    const contentType = twilioRes.headers.get('content-type') || 'audio/mpeg';
+    const buffer = Buffer.from(await twilioRes.arrayBuffer());
+    res.setHeader('Content-Type', contentType);
+    res.send(buffer);
+  } catch (err) {
+    log.error({ callLogId, err }, 'Recording proxy error');
+    res.status(502).send('Could not load recording');
+  }
+});
 
 /**
  * POST /voice/inbound
@@ -40,17 +65,25 @@ router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
 
     const twiml = new VoiceResponse();
     const wsUrl = env.BASE_URL.replace(/^http/, 'ws') + '/media-stream';
+    const recordingCallbackUrl = `${env.BASE_URL}/voice/recording-status`;
+
+    // Start recording via TwiML (works with Stream; REST API can return 21220 for Stream calls).
+    const start = twiml.start();
+    start.recording({
+      recordingStatusCallback: recordingCallbackUrl,
+      recordingStatusCallbackEvent: ['completed'],
+    });
+
+    // Play greeting via Twilio TTS — blocks until complete before <Connect>.
+    // This guarantees the caller hears the full greeting before the Deepgram agent starts listening,
+    // preventing the agent from interrupting its own greeting when the caller says "Hi." early.
+    twiml.say({ voice: 'Polly.Joanna' }, "Hi, this is Hussein's assistant — how can I help you today?");
 
     const connect = twiml.connect();
     const stream = connect.stream({ url: wsUrl });
     stream.parameter({ name: 'from', value: from });
     stream.parameter({ name: 'to', value: to });
     stream.parameter({ name: 'callSid', value: callSid });
-
-    // Start call recording (full conversation). Callback will save recording URL to call log.
-    startCallRecording(callSid).catch((err) =>
-      log.warn({ err, callSid }, 'Failed to start call recording')
-    );
 
     return res.send(twiml.toString());
   } catch (err) {
@@ -70,6 +103,7 @@ router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
 /**
  * POST /voice/recording-status
  * Twilio callback when call recording is ready. Saves recording URL to call log.
+ * If you see "Twilio recording-status webhook received" in logs after a call, Twilio is reaching this URL.
  */
 router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Response) => {
   const log = getLogger();
@@ -77,16 +111,20 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
   const recordingSid = req.body.RecordingSid;
   const recordingUrl = req.body.RecordingUrl;
 
-  log.info({ callSid, recordingSid, recordingUrl }, 'Call recording ready');
+  log.info(
+    { requestId: req.requestId, callSid, recordingSid, recordingUrl },
+    'Twilio recording-status webhook received — recording ready'
+  );
 
   try {
     const callLog = await getCallLogBySid(callSid);
     if (callLog) {
       await updateCallLog(callLog.id, { recordingSid, recordingUrl });
-      // Summary was already sent when the call ended; send recording only (link or MMS)
       sendRecordingOnlyNotification(callLog.id, recordingUrl).catch((err) =>
         log.error({ callSid, err }, 'Failed to send recording notification')
       );
+    } else {
+      log.warn({ callSid }, 'Recording received but no call log found for this CallSid');
     }
   } catch (err) {
     log.error({ callSid, err }, 'Failed to save recording URL to call log');
@@ -209,6 +247,40 @@ router.post('/voicemail-transcription', twilioWebhookAuth, async (req: Request, 
   // TODO: Store transcription and send notification
 
   res.sendStatus(200);
+});
+
+/**
+ * GET /voice/recording/:callLogId
+ * Proxy that fetches the Twilio recording (requires Basic Auth) and streams it to the client.
+ * The SMS link points here so the recipient can play the recording without Twilio credentials.
+ */
+router.get('/recording/:callLogId', async (req: Request, res: Response) => {
+  const log = getLogger();
+  const env = getEnv();
+  const { callLogId } = req.params;
+
+  const callLog = await getCallLogById(callLogId).catch(() => null);
+  if (!callLog?.recordingSid) {
+    log.warn({ callLogId }, 'Recording proxy: no recordingSid found');
+    return res.status(404).send('Recording not available yet — try again in a few seconds.');
+  }
+
+  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Recordings/${callLog.recordingSid}.mp3`;
+  const creds = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+
+  try {
+    const response = await fetch(twilioUrl, { headers: { Authorization: `Basic ${creds}` } });
+    if (!response.ok) {
+      log.warn({ callLogId, status: response.status }, 'Twilio recording fetch failed');
+      return res.status(response.status).send('Recording not found');
+    }
+    res.setHeader('Content-Type', response.headers.get('content-type') ?? 'audio/mpeg');
+    res.setHeader('Content-Disposition', `inline; filename="${callLog.recordingSid}.mp3"`);
+    Readable.fromWeb(response.body as never).pipe(res);
+  } catch (err) {
+    log.error({ callLogId, err }, 'Failed to proxy recording');
+    if (!res.headersSent) res.status(500).send('Failed to fetch recording');
+  }
 });
 
 export default router;

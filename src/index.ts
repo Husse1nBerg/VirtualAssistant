@@ -6,6 +6,7 @@ import { loadEnv, getEnv } from './config';
 import { initLogger, getLogger } from './utils/logger';
 import { requestIdMiddleware } from './utils/requestId';
 import voiceRoutes from './routes/voice';
+import smsRoutes from './routes/sms';
 import healthRoutes from './routes/health';
 import { handleMediaStreamConnection } from './services/callOrchestrator';
 import { getPrisma, disconnectDb } from './services/database';
@@ -44,6 +45,7 @@ async function main() {
 
   app.use('/health', healthRoutes);
   app.use('/voice', voiceRoutes);
+  app.use('/sms', smsRoutes);
 
   // ── HTTP + WebSocket Server ────────────────────
 

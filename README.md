@@ -54,6 +54,14 @@ Rogers Number → (conditional forwarding) → Twilio Number
 - Deepgram API key
 - ngrok (for local development)
 
+### 0. Prisma (after schema changes)
+If you added fields to `prisma/schema.prisma` (e.g. `recordingSid`, `recordingUrl`), regenerate the client and sync the DB. **Stop the dev server first** (it locks the Prisma client), then run:
+```bash
+npx prisma generate
+npx prisma db push
+```
+Then start the app again. If you see `Unknown argument 'recordingSid'` from Prisma, the client was out of date — the steps above fix it.
+
 ### 1. Clone & Install
 
 ```bash
@@ -98,6 +106,8 @@ Primary fails:       https://perorational-kenia-pantheistical.ngrok-free.dev/voi
 Your `.env` already has `BASE_URL=https://perorational-kenia-pantheistical.ngrok-free.dev`.
 
 **Call recording:** Each assistant call is recorded automatically. When the call ends, Twilio sends the recording URL to `/voice/recording-status` and a second SMS is sent with the recording (MMS or link). If you don't receive it, ensure `BASE_URL` in `.env` is your current public URL (e.g. ngrok) so Twilio can reach the recording-status webhook.
+
+**How to know if Twilio is reaching `/voice/recording-status`:** After a test call, watch your server logs. If Twilio reaches the URL you will see: `Twilio recording-status webhook received — recording ready` (with callSid and recordingUrl). If you never see that line within ~30–60 seconds after the call ends, Twilio is not reaching the URL (wrong BASE_URL, ngrok restarted with a new URL, or network/firewall).
 
 ### 5. Send unanswered Rogers calls to your assistant (not Rogers voicemail)
 
@@ -168,10 +178,12 @@ npm test
 |--------|------|-------------|
 | GET | `/health` | Health check + active call count |
 | POST | `/voice/inbound` | Twilio voice webhook (returns TwiML) |
+| POST | `/voice/recording-status` | Recording-ready callback — saves URL, sends recording notification |
 | POST | `/voice/status` | Call status callback |
 | POST | `/voice/fallback` | Fallback voicemail if AI fails |
 | POST | `/voice/voicemail-complete` | Post-recording handler |
 | POST | `/voice/voicemail-transcription` | Async transcription callback |
+| POST | `/sms/status` | Twilio message delivery status callback |
 | WS | `/media-stream` | Twilio Media Streams WebSocket |
 
 ## Environment Variables

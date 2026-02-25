@@ -77,3 +77,14 @@ export interface CreateNotificationInput {
 export async function createNotification(input: CreateNotificationInput) {
   return getPrisma().notificationLog.create({ data: input });
 }
+
+/** Update notification log by Twilio message SID (for delivery status callbacks). */
+export async function updateNotificationByMessageId(
+  messageId: string,
+  data: { status?: string; error?: string }
+) {
+  return getPrisma().notificationLog.updateMany({
+    where: { messageId },
+    data,
+  });
+}
