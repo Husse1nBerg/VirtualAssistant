@@ -5,6 +5,7 @@ import { getEnv } from '../config';
 import { buildAgentSettings, buildAgentSettingsWithClaude } from './agentPrompt';
 import {
   createCallLog,
+  getCallLogBySid,
   updateCallLog,
   addTranscript,
 } from './database';
@@ -96,12 +97,10 @@ async function initializeSession(
   const fromNumber = startData.customParameters?.from || 'unknown';
   const toNumber = startData.customParameters?.to || 'unknown';
 
-  // Create DB record
-  const callLog = await createCallLog({
-    twilioCallSid: startData.callSid,
-    fromNumber,
-    toNumber,
-  });
+  // Reuse the call log created in /inbound; fall back to creating one if missing.
+  const callLog =
+    (await getCallLogBySid(startData.callSid)) ??
+    (await createCallLog({ twilioCallSid: startData.callSid, fromNumber, toNumber }));
 
   const session: CallSession = {
     callId: callLog.id,

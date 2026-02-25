@@ -3,7 +3,7 @@ import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
-import { getCallLogBySid, getCallLogById, updateCallLog } from '../services/database';
+import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog } from '../services/notification';
 
 const router = Router();
@@ -100,7 +100,7 @@ router.get('/recording/:callLogId', async (req: Request, res: Response) => {
  * Returns TwiML that connects a Media Stream WebSocket.
  * On any error, returns TwiML that redirects to fallback (voicemail) so Twilio never plays "application error".
  */
-router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
+router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) => {
   const log = getLogger();
   res.type('text/xml');
 
@@ -111,6 +111,9 @@ router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
     const to = req.body.To || 'unknown';
 
     log.info({ requestId: req.requestId, callSid, from, to }, 'Inbound call received');
+
+    // Create call log immediately so short calls (hang-up during greeting) are still recorded.
+    await createCallLog({ twilioCallSid: callSid, fromNumber: from, toNumber: to });
 
     const twiml = new VoiceResponse();
     const wsUrl = env.BASE_URL.replace(/^http/, 'ws') + '/media-stream';
