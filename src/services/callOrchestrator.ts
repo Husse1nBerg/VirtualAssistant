@@ -8,8 +8,11 @@ import {
   getCallLogBySid,
   updateCallLog,
   addTranscript,
+  getContactByPhone,
+  getRecentCallsByNumber,
 } from './database';
-import { sendPostCallNotifications } from './notification';
+import { sendPostCallNotifications, sendEscalationSMS } from './notification';
+import { getTwilioClient } from './twilioClient';
 import type { CallSummary } from './claude';
 
 // ── Types ────────────────────────────────────────────
@@ -102,6 +105,20 @@ async function initializeSession(
     (await getCallLogBySid(startData.callSid)) ??
     (await createCallLog({ twilioCallSid: startData.callSid, fromNumber, toNumber }));
 
+  // Fetch caller context (contact + recent calls) in parallel — errors are non-fatal
+  let contact: Awaited<ReturnType<typeof getContactByPhone>> = null;
+  let recentCalls: Awaited<ReturnType<typeof getRecentCallsByNumber>> = [];
+  try {
+    [contact, recentCalls] = await Promise.all([
+      getContactByPhone(fromNumber),
+      getRecentCallsByNumber(fromNumber, 3),
+    ]);
+  } catch {
+    // non-fatal; continue with empty context
+  }
+
+  const callerCtx = { contact, recentCalls };
+
   const session: CallSession = {
     callId: callLog.id,
     callSid: startData.callSid,
@@ -138,8 +155,8 @@ async function initializeSession(
 
     // Send agent configuration: OpenAI (managed by Deepgram) or Anthropic
     const settings = env.USE_OPENAI_FOR_AGENT
-      ? buildAgentSettings(env.DEEPGRAM_API_KEY)
-      : buildAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || '');
+      ? buildAgentSettings(env.DEEPGRAM_API_KEY, callerCtx)
+      : buildAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || '', callerCtx);
 
     agentWs.send(JSON.stringify(settings));
     log.info({ callId: session.callId }, 'Agent settings sent');
@@ -236,6 +253,10 @@ function handleAgentEvent(session: CallSession, event: any): void {
 
       if (event.function_name === 'end_call_summary') {
         handleEndCallSummary(session, event.input, event.function_call_id);
+      } else if (event.function_name === 'request_transfer') {
+        handleTransferRequest(session, event.input, event.function_call_id).catch((err) =>
+          log.error({ callId: session.callId, err }, 'Transfer request failed')
+        );
       }
       break;
     }
@@ -310,6 +331,49 @@ async function handleEndCallSummary(
         output: 'Summary captured. You may now say goodbye to the caller.',
       })
     );
+  }
+}
+
+// ── Warm Transfer ────────────────────────────────────
+
+async function handleTransferRequest(
+  session: CallSession,
+  input: any,
+  functionCallId: string
+): Promise<void> {
+  const log = getLogger();
+  const env = getEnv();
+  const reason = (input?.reason as string) || 'No reason given';
+
+  log.info({ callId: session.callId, reason }, 'Transfer requested');
+
+  // Instruct agent to say "please hold" before redirect
+  if (session.agentWs?.readyState === WebSocket.OPEN) {
+    session.agentWs.send(
+      JSON.stringify({
+        type: 'FunctionCallResponse',
+        function_call_id: functionCallId,
+        output: "Transfer initiated. Tell the caller: 'Let me try to connect you right now — please hold.'",
+      })
+    );
+  }
+
+  // Fire escalation SMS (fire-and-forget)
+  sendEscalationSMS(session.callId, session.fromNumber, reason).catch((err) =>
+    log.error({ callId: session.callId, err }, 'Failed to send escalation SMS')
+  );
+
+  // Wait for agent to speak, then redirect the call
+  await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+
+  try {
+    await getTwilioClient().calls(session.callSid).update({
+      url: `${env.BASE_URL}/voice/transfer/${session.callId}`,
+      method: 'POST',
+    });
+    log.info({ callId: session.callId }, 'Call redirected to transfer TwiML');
+  } catch (err) {
+    log.error({ callId: session.callId, err }, 'Failed to redirect call for transfer');
   }
 }
 

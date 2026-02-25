@@ -15,6 +15,48 @@
  */
 
 import { getEnv } from '../config';
+import type { Contact } from './database';
+
+// ── Caller Context ────────────────────────────────────
+
+export interface CallerContext {
+  contact: Contact | null;
+  recentCalls: { reasonForCall: string | null; startedAt: Date }[];
+}
+
+export function buildCallerContextBlock(
+  contact: Contact | null,
+  recentCalls: { reasonForCall: string | null; startedAt: Date }[]
+): string {
+  if (!contact) return '';
+
+  const lines = [
+    '',
+    'CALLER CONTEXT — do not read this aloud verbatim',
+    `Name: ${contact.name}. You already know their name — do not ask for it.`,
+  ];
+
+  if (contact.isVip) {
+    lines.push('This is a close contact (VIP). Be warm, informal, first-name basis. Skip formal pleasantries.');
+  }
+
+  if (contact.notes) {
+    lines.push(`Notes: ${contact.notes}`);
+  }
+
+  if (recentCalls.length > 0) {
+    lines.push(`They have called ${recentCalls.length} time(s) before:`);
+    for (const call of recentCalls) {
+      const date = new Date(call.startedAt).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      });
+      lines.push(`  - ${date}: ${call.reasonForCall || 'no reason recorded'}`);
+    }
+    lines.push('Reference prior calls naturally if relevant.');
+  }
+
+  return lines.join('\n');
+}
 
 // ── Out of office / holiday mode ─────────────────────
 // When OOO_ENABLED is true, greeting and prompt tell callers you're away; agent still takes messages.
@@ -151,6 +193,12 @@ STRUCTURED SUMMARY (when you call end_call_summary)
 - full_summary: 2–4 sentences for Hussein: who called, what they need, any key details (number, time, context).
 - confidence_score: 0.8–1.0 if caller confirmed; 0.5–0.7 if inferred; 0.2–0.4 if call ended abruptly.
 
+ESCALATION — TRANSFER REQUEST
+If the caller says "I need to speak to Hussein", "transfer me", "connect me now", "this is an emergency", "I need a human":
+- Call \`request_transfer\` immediately.
+- Say: "Of course — let me try to connect you with Hussein right now. Please hold just a moment."
+- Do NOT end the call — the system handles the transfer.
+
 WHAT YOU MUST NEVER DO
 - Never make commitments on Hussein's behalf — no pricing, deadlines, approvals, or deliverables.
 - Never share Hussein's schedule, location, other phone numbers, email, or personal details.
@@ -254,6 +302,21 @@ export const AGENT_FUNCTIONS = [
       ],
     },
   },
+  {
+    name: 'request_transfer',
+    description:
+      'Call when caller explicitly asks to speak to Hussein directly, says it is an emergency, says "transfer me" or "I need a human". Initiates a warm transfer.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'Why the caller wants to be transferred',
+        },
+      },
+      required: ['reason'],
+    },
+  },
 ];
 
 // ── Deepgram Agent Settings Configuration ────────────
@@ -275,19 +338,24 @@ const baseSettings = {
   },
 };
 
-export function buildAgentSettings(_deepgramApiKey: string) {
+export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
+  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
+  const greeting = ctx?.contact
+    ? `Hi ${ctx.contact.name}! This is Hussein's assistant — how can I help you today?`
+    : getGreetingText();
+
   return {
     ...baseSettings,
     agent: {
       ...baseSettings.agent,
       context: {
         messages: [
-          { type: 'History' as const, role: 'assistant' as const, content: getGreetingText() },
+          { type: 'History' as const, role: 'assistant' as const, content: greeting },
         ],
       },
       think: {
         provider: { type: 'open_ai' as const, model: 'gpt-4o-mini' },
-        prompt: getAgentPrompt(),
+        prompt,
         functions: AGENT_FUNCTIONS,
       },
     },
@@ -298,7 +366,12 @@ export function buildAgentSettings(_deepgramApiKey: string) {
  * Alternate config if you want to use Anthropic Claude as the LLM
  * instead of OpenAI. Deepgram supports this natively.
  */
-export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string) {
+export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string, ctx?: CallerContext) {
+  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
+  const greeting = ctx?.contact
+    ? `Hi ${ctx.contact.name}! This is Hussein's assistant — how can I help you today?`
+    : getGreetingText();
+
   // V1 only allows claude-3-5-haiku-latest | claude-sonnet-4-20250514 (think-models API).
   // Pass Anthropic key via endpoint.headers so Deepgram can call Claude with your key.
   return {
@@ -307,7 +380,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
       ...baseSettings.agent,
       context: {
         messages: [
-          { type: 'History' as const, role: 'assistant' as const, content: getGreetingText() },
+          { type: 'History' as const, role: 'assistant' as const, content: greeting },
         ],
       },
       think: {
@@ -315,7 +388,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
           type: 'anthropic' as const,
           model: 'claude-sonnet-4-20250514',
         },
-        prompt: getAgentPrompt(),
+        prompt,
         functions: AGENT_FUNCTIONS,
         endpoint: {
           url: 'https://api.anthropic.com',

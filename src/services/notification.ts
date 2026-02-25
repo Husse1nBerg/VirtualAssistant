@@ -280,6 +280,15 @@ export async function sendSummaryOnlyFromCallLog(callLog: CallLogForNotification
   }
 }
 
+/**
+ * Sends an urgent escalation SMS when the caller requests a warm transfer.
+ */
+export async function sendEscalationSMS(callLogId: string, fromNumber: string, reason: string): Promise<void> {
+  const env = getEnv();
+  const body = `🚨 URGENT — Caller wants to speak to you NOW.\nFrom: ${fromNumber}\nReason: ${reason}`;
+  await sendSMS(body, callLogId, env.OWNER_PHONE_NUMBER);
+}
+
 async function sendSMS(body: string, callLogId: string, to: string): Promise<void> {
   const log = getLogger();
   const env = getEnv();

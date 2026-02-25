@@ -3,27 +3,40 @@ import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
-import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog } from '../services/database';
-import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog } from '../services/notification';
+import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone } from '../services/database';
+import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendEscalationSMS } from '../services/notification';
+import { getGreetingText } from '../services/agentPrompt';
+import { getTwilioClient } from '../services/twilioClient';
 
 const router = Router();
 
-const GREETING_TEXT = "Hi, this is Hussein's assistant — how can I help you today?";
-let greetingCache: Buffer | null = null;
+// Cache greeting audio keyed by greeting text (supports generic + personalized greetings).
+const greetingCache = new Map<string, Buffer>();
+
+function buildGreetingText(callerName?: string): string {
+  if (callerName) {
+    return `Hi ${callerName}! This is Hussein's assistant — how can I help you today?`;
+  }
+  return getGreetingText();
+}
 
 /**
  * GET /voice/greeting
  * Generates the call greeting using Deepgram TTS (same voice as the agent).
  * Twilio's <Play> fetches this URL so the caller hears a consistent voice throughout the call.
- * Result is cached in memory — Deepgram is only called once per server process.
+ * When OOO mode is on (OOO_ENABLED), the greeting says you're away and still taking messages.
+ * Result is cached in memory per greeting text — Deepgram is only called once per server process per text.
  */
 router.get('/greeting', async (req: Request, res: Response) => {
   const log = getLogger();
   const env = getEnv();
+  const callerName = typeof req.query.caller === 'string' ? req.query.caller : undefined;
+  const greetingText = buildGreetingText(callerName);
 
-  if (greetingCache) {
+  const cached = greetingCache.get(greetingText);
+  if (cached) {
     res.setHeader('Content-Type', 'audio/mpeg');
-    return res.send(greetingCache);
+    return res.send(cached);
   }
 
   try {
@@ -35,7 +48,7 @@ router.get('/greeting', async (req: Request, res: Response) => {
           Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text: GREETING_TEXT }),
+        body: JSON.stringify({ text: greetingText }),
       }
     );
 
@@ -45,8 +58,8 @@ router.get('/greeting', async (req: Request, res: Response) => {
     }
 
     const buffer = Buffer.from(await dgRes.arrayBuffer());
-    greetingCache = buffer;
-    log.info('Greeting audio generated and cached');
+    greetingCache.set(greetingText, buffer);
+    log.info({ ooo: getEnv().OOO_ENABLED, callerName }, 'Greeting audio generated and cached');
     res.setHeader('Content-Type', 'audio/mpeg');
     res.send(buffer);
   } catch (err) {
@@ -115,6 +128,17 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
     // Create call log immediately so short calls (hang-up during greeting) are still recorded.
     await createCallLog({ twilioCallSid: callSid, fromNumber: from, toNumber: to });
 
+    // Look up contact for personalized greeting (non-fatal if it fails)
+    let greetingParams = '';
+    try {
+      const contact = await getContactByPhone(from);
+      if (contact) {
+        greetingParams = `?caller=${encodeURIComponent(contact.name)}&vip=${contact.isVip}`;
+      }
+    } catch (err) {
+      log.warn({ err }, 'Failed to look up contact for greeting — using generic greeting');
+    }
+
     const twiml = new VoiceResponse();
     const wsUrl = env.BASE_URL.replace(/^http/, 'ws') + '/media-stream';
     const recordingCallbackUrl = `${env.BASE_URL}/voice/recording-status`;
@@ -128,7 +152,7 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
 
     // Play greeting via Deepgram TTS (same voice as the agent) — blocks until complete before <Connect>.
     // Twilio fetches /voice/greeting, which calls Deepgram and returns the MP3.
-    twiml.play(`${env.BASE_URL}/voice/greeting`);
+    twiml.play(`${env.BASE_URL}/voice/greeting${greetingParams}`);
 
     const connect = twiml.connect();
     const stream = connect.stream({ url: wsUrl });
@@ -278,6 +302,67 @@ router.post('/voicemail-complete', twilioWebhookAuth, async (req: Request, res: 
   const twiml = new VoiceResponse();
   twiml.say({ voice: 'Polly.Joanna' }, 'Thank you. Your message has been recorded. Goodbye.');
   twiml.hangup();
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+/**
+ * POST /voice/transfer/:callLogId
+ * TwiML that dials Hussein's number. Called by Twilio after callOrchestrator redirects the call.
+ */
+router.post('/transfer/:callLogId', twilioWebhookAuth, async (req: Request, res: Response) => {
+  const env = getEnv();
+  const callLogId = req.params.callLogId as string;
+
+  const twiml = new VoiceResponse();
+  const dial = twiml.dial({
+    callerId: env.TWILIO_PHONE_NUMBER,
+    timeout: 20,
+    action: `${env.BASE_URL}/voice/transfer-status/${callLogId}`,
+    method: 'POST',
+  } as Parameters<typeof twiml.dial>[0]);
+  dial.number(env.OWNER_PHONE_NUMBER);
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+/**
+ * POST /voice/transfer-status/:callLogId
+ * Called by Twilio after <Dial> completes (any outcome).
+ * If Hussein answered → let call end naturally. If no answer → tell caller + SMS Hussein.
+ */
+router.post('/transfer-status/:callLogId', twilioWebhookAuth, async (req: Request, res: Response) => {
+  const log = getLogger();
+  const env = getEnv();
+  const callLogId = req.params.callLogId as string;
+  const dialCallStatus = req.body.DialCallStatus as string;
+
+  const twiml = new VoiceResponse();
+
+  if (dialCallStatus !== 'completed') {
+    twiml.say(
+      { voice: 'Polly.Joanna' },
+      "I wasn't able to reach Hussein directly. I'll make sure he gets your message and calls you back as soon as possible."
+    );
+    twiml.hangup();
+
+    // Notify Hussein that the caller tried to reach him but got no answer
+    try {
+      const callLog = await getCallLogById(callLogId);
+      const callerDisplay = callLog?.callerName || callLog?.fromNumber || req.body.From || 'Unknown caller';
+      const callerNumber = callLog?.fromNumber || req.body.From || 'unknown';
+      const body = `🚨 ${callerDisplay} tried to reach you but got no answer. Call them: ${callerNumber}`;
+      await getTwilioClient().messages.create({
+        body,
+        from: env.TWILIO_PHONE_NUMBER,
+        to: env.OWNER_PHONE_NUMBER,
+      });
+    } catch (err) {
+      log.error({ callLogId, err }, 'Failed to send transfer no-answer SMS');
+    }
+  }
 
   res.type('text/xml');
   res.send(twiml.toString());

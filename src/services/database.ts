@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Contact } from '@prisma/client';
+export type { Contact };
 import { getLogger } from '../utils/logger';
 
 let _prisma: PrismaClient | null = null;
@@ -76,6 +77,50 @@ export interface CreateNotificationInput {
 
 export async function createNotification(input: CreateNotificationInput) {
   return getPrisma().notificationLog.create({ data: input });
+}
+
+// ── Contact Operations ───────────────────────────────
+
+export async function getContactByPhone(phoneNumber: string): Promise<Contact | null> {
+  return getPrisma().contact.findUnique({ where: { phoneNumber } });
+}
+
+export async function upsertContact(input: {
+  phoneNumber: string;
+  name: string;
+  isVip?: boolean;
+  notes?: string;
+}): Promise<Contact> {
+  return getPrisma().contact.upsert({
+    where: { phoneNumber: input.phoneNumber },
+    update: { name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null },
+    create: { phoneNumber: input.phoneNumber, name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null },
+  });
+}
+
+export async function deleteContact(id: string): Promise<void> {
+  await getPrisma().contact.delete({ where: { id } });
+}
+
+export async function getAllContacts(): Promise<Contact[]> {
+  return getPrisma().contact.findMany({ orderBy: { name: 'asc' } });
+}
+
+export async function getRecentCallsByNumber(phoneNumber: string, limit = 5) {
+  return getPrisma().callLog.findMany({
+    where: { fromNumber: phoneNumber },
+    orderBy: { startedAt: 'desc' },
+    take: limit,
+    select: { id: true, reasonForCall: true, startedAt: true },
+  });
+}
+
+export async function getRecentCalls(limit: number) {
+  return getPrisma().callLog.findMany({
+    orderBy: { startedAt: 'desc' },
+    take: limit,
+    include: { transcripts: true },
+  });
 }
 
 /** Update notification log by Twilio message SID (for delivery status callbacks). */

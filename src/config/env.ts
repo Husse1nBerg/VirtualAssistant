@@ -15,6 +15,11 @@ const envSchema = z.object({
   OWNER_PHONE_NUMBER: z.string().startsWith('+'),
   OWNER_WHATSAPP_NUMBER: z.string().optional().default(''),
 
+  // Out of office / holiday mode (agent says you're away, still takes messages)
+  OOO_ENABLED: z.coerce.boolean().default(false),
+  OOO_UNTIL: z.string().optional().default(''),   // e.g. "January 2" or "Jan 2, 2026"
+  OOO_MESSAGE: z.string().optional().default(''), // e.g. "off for the holidays"
+
   // LLM for voice agent: openai (Deepgram managed) or anthropic (requires key in Deepgram Console)
   USE_OPENAI_FOR_AGENT: z.coerce.boolean().default(true),
 
@@ -31,6 +36,9 @@ const envSchema = z.object({
 
   // Database
   DATABASE_URL: z.string().default('file:./dev.db'),
+
+  // Dashboard (secret-URL web UI — leave empty to disable)
+  DASHBOARD_TOKEN: z.string().default(''),
 
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
