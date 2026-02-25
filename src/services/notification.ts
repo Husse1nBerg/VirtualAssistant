@@ -190,14 +190,14 @@ export async function sendRecordingOnlyNotification(
   const log = getLogger();
   const env = getEnv();
   const to = env.OWNER_PHONE_NUMBER;
-  const recordingLink = `${env.BASE_URL}/voice/recording/${callLogId}`;
-  const bodyWithLink = `📞 Call recording: ${recordingLink}`;
+  const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLogId}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
   try {
     const msg = await getTwilioClient().messages.create({
-      body: bodyWithLink,
+      body: '📞 Call recording',
       from: env.TWILIO_PHONE_NUMBER,
       to,
+      mediaUrl: [recordingProxyUrl],
       statusCallback,
     });
     await createNotification({
@@ -208,13 +208,13 @@ export async function sendRecordingOnlyNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId, messageSid: msg.sid }, 'Recording link sent via SMS');
+    log.info({ callLogId, messageSid: msg.sid }, 'Recording sent via MMS');
   } catch (err: unknown) {
     log.error({ callLogId, err }, 'Failed to send recording SMS');
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
-      await sendWhatsApp(bodyWithLink, callLogId, env.OWNER_WHATSAPP_NUMBER);
+      await sendWhatsApp(`📞 Call recording: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
     } catch (err) {
       log.warn({ callLogId, err }, 'WhatsApp recording notification failed');
     }
@@ -233,14 +233,14 @@ export async function sendCombinedCallNotification(
   const log = getLogger();
   const env = getEnv();
   const summaryText = formatSummaryFromCallLog(callLog);
-  const recordingLink = `${env.BASE_URL}/voice/recording/${callLog.id}`;
-  const combinedBody = `${summaryText}\n\n📞 Recording: ${recordingLink}`;
+  const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLog.id}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
   try {
     const msg = await getTwilioClient().messages.create({
-      body: combinedBody,
+      body: summaryText,
       from: env.TWILIO_PHONE_NUMBER,
       to: env.OWNER_PHONE_NUMBER,
+      mediaUrl: [recordingProxyUrl],
       statusCallback,
     });
     await createNotification({
@@ -251,13 +251,13 @@ export async function sendCombinedCallNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId: callLog.id, messageSid: msg.sid }, 'Combined summary + recording link sent via SMS');
+    log.info({ callLogId: callLog.id, messageSid: msg.sid }, 'Combined summary + recording sent via MMS');
   } catch (err: unknown) {
-    log.error({ callLogId: callLog.id, err }, 'Failed to send combined summary SMS');
+    log.error({ callLogId: callLog.id, err }, 'Failed to send combined summary MMS');
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
-      await sendWhatsApp(combinedBody, callLog.id, env.OWNER_WHATSAPP_NUMBER);
+      await sendWhatsApp(summaryText, callLog.id, env.OWNER_WHATSAPP_NUMBER);
     } catch (err) {
       log.warn({ callLogId: callLog.id, err }, 'WhatsApp combined notification failed');
     }
