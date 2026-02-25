@@ -14,6 +14,54 @@
  *     is invoked after the conversation ends.
  */
 
+import { getEnv } from '../config';
+
+// ── Out of office / holiday mode ─────────────────────
+// When OOO_ENABLED is true, greeting and prompt tell callers you're away; agent still takes messages.
+
+export function getGreetingText(): string {
+  const env = getEnv();
+  if (!env.OOO_ENABLED) {
+    return "Hi, this is Hussein's assistant — how can I help you today?";
+  }
+  const until = env.OOO_UNTIL?.trim();
+  const message = env.OOO_MESSAGE?.trim();
+  if (until && message) {
+    return `Hi, this is Hussein's assistant. Hussein is ${message} until ${until}, but I'm still taking messages. How can I help you today?`;
+  }
+  if (until) {
+    return `Hi, this is Hussein's assistant. Hussein is away until ${until}, but I'm still taking messages. How can I help you today?`;
+  }
+  if (message) {
+    return `Hi, this is Hussein's assistant. Hussein is ${message}, but I'm still taking messages. How can I help you today?`;
+  }
+  return "Hi, this is Hussein's assistant. Hussein is away at the moment, but I'm still taking messages. How can I help you today?";
+}
+
+/** Full agent prompt including optional OOO instructions. */
+export function getAgentPrompt(): string {
+  const env = getEnv();
+  if (!env.OOO_ENABLED) return AGENT_INSTRUCTIONS;
+
+  const until = env.OOO_UNTIL?.trim() || 'an unspecified date';
+  const oooBlock = `
+
+OUT OF OFFICE
+Hussein is currently away${env.OOO_MESSAGE?.trim() ? ` (${env.OOO_MESSAGE})` : ''}. He returns ${until}.
+- Still take messages as usual. Say he'll get back when he's back.
+- If they ask when he'll be available, say: "He's away until ${until}. I'll make sure he gets your message and reaches out when he's back."
+- Do not promise a specific callback time.`;
+
+  // Patch the OPENING section so it matches the OOO greeting the caller actually heard.
+  const oooGreeting = getGreetingText();
+  const patched = AGENT_INSTRUCTIONS.replace(
+    /The greeting is played before you connect: ".*?"/,
+    `The greeting is played before you connect: "${oooGreeting}"`
+  );
+
+  return patched + oooBlock;
+}
+
 // ── The Agent Prompt ─────────────────────────────────
 
 export const AGENT_INSTRUCTIONS = `You are Hussein Bayoun's phone assistant. You answer missed calls and take messages. Sound like a real, warm human assistant — not a phone tree. Keep calls brief and natural.
@@ -220,17 +268,8 @@ const baseSettings = {
   },
   agent: {
     language: 'en' as const,
-    // No greeting here — greeting is played via Twilio <Say> TwiML before the stream connects,
-    // guaranteeing it completes before the agent starts listening (prevents self-interruption).
-    context: {
-      messages: [
-        {
-          type: 'History' as const,
-          role: 'assistant' as const,
-          content: "Hi, this is Hussein's assistant — how can I help you today?",
-        },
-      ],
-    },
+    // No greeting or context here — both are injected at call time by the builder functions
+    // so they always reflect the current OOO state.
     listen: { provider: { type: 'deepgram' as const, model: 'nova-3' } },
     speak: { provider: { type: 'deepgram' as const, model: 'aura-2-thalia-en' } },
   },
@@ -241,9 +280,14 @@ export function buildAgentSettings(_deepgramApiKey: string) {
     ...baseSettings,
     agent: {
       ...baseSettings.agent,
+      context: {
+        messages: [
+          { type: 'History' as const, role: 'assistant' as const, content: getGreetingText() },
+        ],
+      },
       think: {
         provider: { type: 'open_ai' as const, model: 'gpt-4o-mini' },
-        prompt: AGENT_INSTRUCTIONS,
+        prompt: getAgentPrompt(),
         functions: AGENT_FUNCTIONS,
       },
     },
@@ -261,12 +305,17 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
     ...baseSettings,
     agent: {
       ...baseSettings.agent,
+      context: {
+        messages: [
+          { type: 'History' as const, role: 'assistant' as const, content: getGreetingText() },
+        ],
+      },
       think: {
         provider: {
           type: 'anthropic' as const,
           model: 'claude-sonnet-4-20250514',
         },
-        prompt: AGENT_INSTRUCTIONS,
+        prompt: getAgentPrompt(),
         functions: AGENT_FUNCTIONS,
         endpoint: {
           url: 'https://api.anthropic.com',
