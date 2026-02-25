@@ -1,4 +1,3 @@
-import { Readable } from 'stream';
 import { Router, Request, Response } from 'express';
 import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
@@ -9,6 +8,53 @@ import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog } from '../se
 
 const router = Router();
 
+const GREETING_TEXT = "Hi, this is Hussein's assistant — how can I help you today?";
+let greetingCache: Buffer | null = null;
+
+/**
+ * GET /voice/greeting
+ * Generates the call greeting using Deepgram TTS (same voice as the agent).
+ * Twilio's <Play> fetches this URL so the caller hears a consistent voice throughout the call.
+ * Result is cached in memory — Deepgram is only called once per server process.
+ */
+router.get('/greeting', async (req: Request, res: Response) => {
+  const log = getLogger();
+  const env = getEnv();
+
+  if (greetingCache) {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    return res.send(greetingCache);
+  }
+
+  try {
+    const dgRes = await fetch(
+      'https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=mp3',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: GREETING_TEXT }),
+      }
+    );
+
+    if (!dgRes.ok) {
+      log.error({ status: dgRes.status }, 'Deepgram TTS failed for greeting');
+      return res.status(502).send('TTS unavailable');
+    }
+
+    const buffer = Buffer.from(await dgRes.arrayBuffer());
+    greetingCache = buffer;
+    log.info('Greeting audio generated and cached');
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.send(buffer);
+  } catch (err) {
+    log.error({ err }, 'Failed to generate greeting audio');
+    res.status(502).send('TTS unavailable');
+  }
+});
+
 /**
  * GET /voice/recording/:callLogId
  * Proxies the Twilio recording so the link works without Basic Auth.
@@ -16,7 +62,7 @@ const router = Router();
  */
 router.get('/recording/:callLogId', async (req: Request, res: Response) => {
   const log = getLogger();
-  const { callLogId } = req.params;
+  const callLogId = req.params.callLogId as string;
   const env = getEnv();
 
   const callLog = await getCallLogById(callLogId);
@@ -74,10 +120,9 @@ router.post('/inbound', twilioWebhookAuth, (req: Request, res: Response) => {
       recordingStatusCallbackEvent: ['completed'],
     });
 
-    // Play greeting via Twilio TTS — blocks until complete before <Connect>.
-    // This guarantees the caller hears the full greeting before the Deepgram agent starts listening,
-    // preventing the agent from interrupting its own greeting when the caller says "Hi." early.
-    twiml.say({ voice: 'Polly.Joanna' }, "Hi, this is Hussein's assistant — how can I help you today?");
+    // Play greeting via Deepgram TTS (same voice as the agent) — blocks until complete before <Connect>.
+    // Twilio fetches /voice/greeting, which calls Deepgram and returns the MP3.
+    twiml.play(`${env.BASE_URL}/voice/greeting`);
 
     const connect = twiml.connect();
     const stream = connect.stream({ url: wsUrl });
@@ -247,40 +292,6 @@ router.post('/voicemail-transcription', twilioWebhookAuth, async (req: Request, 
   // TODO: Store transcription and send notification
 
   res.sendStatus(200);
-});
-
-/**
- * GET /voice/recording/:callLogId
- * Proxy that fetches the Twilio recording (requires Basic Auth) and streams it to the client.
- * The SMS link points here so the recipient can play the recording without Twilio credentials.
- */
-router.get('/recording/:callLogId', async (req: Request, res: Response) => {
-  const log = getLogger();
-  const env = getEnv();
-  const { callLogId } = req.params;
-
-  const callLog = await getCallLogById(callLogId).catch(() => null);
-  if (!callLog?.recordingSid) {
-    log.warn({ callLogId }, 'Recording proxy: no recordingSid found');
-    return res.status(404).send('Recording not available yet — try again in a few seconds.');
-  }
-
-  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Recordings/${callLog.recordingSid}.mp3`;
-  const creds = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
-
-  try {
-    const response = await fetch(twilioUrl, { headers: { Authorization: `Basic ${creds}` } });
-    if (!response.ok) {
-      log.warn({ callLogId, status: response.status }, 'Twilio recording fetch failed');
-      return res.status(response.status).send('Recording not found');
-    }
-    res.setHeader('Content-Type', response.headers.get('content-type') ?? 'audio/mpeg');
-    res.setHeader('Content-Disposition', `inline; filename="${callLog.recordingSid}.mp3"`);
-    Readable.fromWeb(response.body as never).pipe(res);
-  } catch (err) {
-    log.error({ callLogId, err }, 'Failed to proxy recording');
-    if (!res.headersSent) res.status(500).send('Failed to fetch recording');
-  }
 });
 
 export default router;
