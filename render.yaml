@@ -4,8 +4,8 @@ services:
     name: virtual-assistant
     runtime: node
     plan: starter
-    buildCommand: npm ci && npx prisma generate && npm run build && npx prisma db push
-    startCommand: node dist/index.js
+    buildCommand: npm ci && npx prisma generate && npm run build
+    startCommand: npx prisma db push --skip-generate && node dist/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
