@@ -72,18 +72,21 @@ router.get('/recording/:callLogId', async (req: Request, res: Response) => {
   }
 
   const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+  // Twilio's RecordingUrl has no extension — append .mp3 to get audio (bare URL returns XML metadata).
+  const mp3Url = callLog.recordingUrl!.replace(/\.(mp3|wav|ogg)$/, '') + '.mp3';
   try {
-    const twilioRes = await fetch(callLog.recordingUrl!, {
+    const twilioRes = await fetch(mp3Url, {
       headers: { Authorization: `Basic ${auth}` },
       redirect: 'follow',
     });
     if (!twilioRes.ok) {
-      log.warn({ callLogId, status: twilioRes.status }, 'Twilio recording fetch failed');
+      log.warn({ callLogId, status: twilioRes.status, mp3Url }, 'Twilio recording fetch failed');
       return res.status(502).send('Could not load recording');
     }
-    const contentType = twilioRes.headers.get('content-type') || 'audio/mpeg';
     const buffer = Buffer.from(await twilioRes.arrayBuffer());
-    res.setHeader('Content-Type', contentType);
+    log.info({ callLogId, bytes: buffer.length }, 'Recording proxy: served audio');
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', buffer.length);
     res.send(buffer);
   } catch (err) {
     log.error({ callLogId, err }, 'Recording proxy error');
