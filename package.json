@@ -14,7 +14,8 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "analyze": "tsx scripts/analyze-transcripts.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

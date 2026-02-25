@@ -19,3 +19,4 @@ coverage/
 Thumbs.db
 .claude/
 .cursor/
+scripts/analysis-report.md
