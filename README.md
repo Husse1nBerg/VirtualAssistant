@@ -39,7 +39,7 @@ Rogers Number → (conditional forwarding) → Twilio Number
 | STT | Deepgram Nova-2 (real-time) |
 | TTS | Deepgram Aura / ElevenLabs |
 | AI Brain | Claude (Sonnet 4.5) |
-| Notifications | Twilio SMS + WhatsApp |
+| Notifications | Twilio SMS  |
 | Database | SQLite via Prisma |
 | Deployment | Docker / Render |
 

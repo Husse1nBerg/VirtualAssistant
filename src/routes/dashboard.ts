@@ -150,10 +150,12 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
     </tr>`;
   }).join('\n');
 
+  const LANG_LABELS: Record<string, string> = { en: '🇬🇧 English', fr: '🇫🇷 French' };
   const contactRows = contacts.map((c) => `<tr>
     <td>${escapeHtml(c.name)}</td>
     <td class="phone">${escapeHtml(c.phoneNumber)}</td>
     <td>${c.isVip ? '<span class="badge badge-high">⭐ VIP</span>' : 'Regular'}</td>
+    <td>${LANG_LABELS[c.language ?? 'en'] ?? escapeHtml(c.language ?? 'en')}</td>
     <td>${escapeHtml(c.notes || '')}</td>
     <td class="actions">
       <button class="btn edit-btn"
@@ -161,6 +163,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
         data-phone="${escapeHtml(c.phoneNumber)}"
         data-name="${escapeHtml(c.name)}"
         data-vip="${c.isVip}"
+        data-language="${escapeHtml(c.language ?? 'en')}"
         data-notes="${escapeHtml(c.notes || '')}">Edit</button>
       <button class="btn btn-danger delete-btn" data-id="${escapeHtml(c.id)}">Delete</button>
     </td>
@@ -251,7 +254,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
     <h2>Contacts (${contacts.length})</h2>
     ${contacts.length === 0 ? noContactsMsg : `<table>
       <thead><tr>
-        <th>Name</th><th>Phone</th><th>Type</th><th>Notes</th><th>Actions</th>
+        <th>Name</th><th>Phone</th><th>Type</th><th>Language</th><th>Notes</th><th>Actions</th>
       </tr></thead>
       <tbody>${contactRows}</tbody>
     </table>`}
@@ -268,6 +271,13 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
           <div class="form-group">
             <label for="c-phone">Phone Number *</label>
             <input type="tel" id="c-phone" required placeholder="+15141234567">
+          </div>
+          <div class="form-group">
+            <label for="c-language">Language</label>
+            <select id="c-language">
+              <option value="en">🇬🇧 English</option>
+              <option value="fr">🇫🇷 French</option>
+            </select>
           </div>
           <div class="form-group">
             <label for="c-notes">Notes</label>
@@ -298,6 +308,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
         document.getElementById('c-phone').value = d.phone || '';
         document.getElementById('c-name').value = d.name || '';
         document.getElementById('c-vip').checked = d.vip === 'true';
+        document.getElementById('c-language').value = d.language || 'en';
         document.getElementById('c-notes').value = d.notes || '';
         document.getElementById('form-title').textContent = 'Edit Contact';
         document.getElementById('cancel-btn').style.display = '';
@@ -329,6 +340,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
         name: document.getElementById('c-name').value.trim(),
         phoneNumber: document.getElementById('c-phone').value.trim(),
         isVip: document.getElementById('c-vip').checked,
+        language: document.getElementById('c-language').value || 'en',
         notes: document.getElementById('c-notes').value.trim() || undefined,
       };
       try {
@@ -382,7 +394,7 @@ router.post('/:token/contacts', async (req: Request, res: Response) => {
   if (!env.DASHBOARD_TOKEN || req.params.token !== env.DASHBOARD_TOKEN) {
     return res.status(404).send('Not found');
   }
-  const { phoneNumber, name, isVip, notes } = req.body as Record<string, unknown>;
+  const { phoneNumber, name, isVip, notes, language } = req.body as Record<string, unknown>;
   if (!phoneNumber || !name) {
     return res.status(400).json({ error: 'phoneNumber and name are required' });
   }
@@ -392,6 +404,7 @@ router.post('/:token/contacts', async (req: Request, res: Response) => {
       name: String(name),
       isVip: isVip === true || isVip === 'true',
       notes: notes ? String(notes) : undefined,
+      language: language ? String(language) : 'en',
     });
     return res.json(contact);
   } catch (err) {

@@ -90,11 +90,12 @@ export async function upsertContact(input: {
   name: string;
   isVip?: boolean;
   notes?: string;
+  language?: string;
 }): Promise<Contact> {
   return getPrisma().contact.upsert({
     where: { phoneNumber: input.phoneNumber },
-    update: { name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null },
-    create: { phoneNumber: input.phoneNumber, name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null },
+    update: { name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null, language: input.language ?? 'en' },
+    create: { phoneNumber: input.phoneNumber, name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null, language: input.language ?? 'en' },
   });
 }
 

@@ -17,6 +17,34 @@
 import { getEnv } from '../config';
 import type { Contact } from './database';
 
+// ── Language Support ──────────────────────────────────
+
+/** Human-readable names for supported language codes. */
+const LANGUAGE_NAMES: Record<string, string> = {
+  fr: 'French',
+};
+
+/** Deepgram Aura-2 TTS models. */
+const TTS_MODELS: Record<string, string> = {
+  en: 'aura-2-asteria-en',
+  fr: 'aura-2-agathe-fr',
+};
+
+function getTtsModel(language: string): string {
+  return TTS_MODELS[language] ?? TTS_MODELS['en'];
+}
+
+function getGreetingTextForLanguage(language: string, name?: string): string {
+  if (language === 'fr') {
+    return name
+      ? `Bonjour ${name}! Je suis l'assistant d'Hussein — comment puis-je vous aider aujourd'hui?`
+      : "Bonjour, je suis l'assistant d'Hussein — comment puis-je vous aider aujourd'hui?";
+  }
+  return name
+    ? `Hi ${name}! This is Hussein's assistant — how can I help you today?`
+    : getGreetingText();
+}
+
 // ── Caller Context ────────────────────────────────────
 
 export interface CallerContext {
@@ -38,6 +66,15 @@ export function buildCallerContextBlock(
 
   if (contact.isVip) {
     lines.push('This is a close contact (VIP). Be warm, informal, first-name basis. Skip formal pleasantries.');
+  }
+
+  if (contact.language && contact.language !== 'en') {
+    const langName = LANGUAGE_NAMES[contact.language] ?? contact.language;
+    lines.push(
+      `LANGUAGE OVERRIDE: This caller's preferred language is ${langName}. ` +
+      `You MUST speak to them entirely in ${langName} for the whole call — ` +
+      `greetings, questions, summary, and closing. Do NOT use English.`
+    );
   }
 
   if (contact.notes) {
@@ -340,14 +377,15 @@ const baseSettings = {
 
 export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
   const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
-  const greeting = ctx?.contact
-    ? `Hi ${ctx.contact.name}! This is Hussein's assistant — how can I help you today?`
-    : getGreetingText();
+  const lang = ctx?.contact?.language ?? 'en';
+  const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined);
 
   return {
     ...baseSettings,
     agent: {
       ...baseSettings.agent,
+      language: lang,
+      speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
       context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: greeting },
@@ -368,9 +406,8 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
  */
 export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string, ctx?: CallerContext) {
   const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
-  const greeting = ctx?.contact
-    ? `Hi ${ctx.contact.name}! This is Hussein's assistant — how can I help you today?`
-    : getGreetingText();
+  const lang = ctx?.contact?.language ?? 'en';
+  const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined);
 
   // V1 only allows claude-3-5-haiku-latest | claude-sonnet-4-20250514 (think-models API).
   // Pass Anthropic key via endpoint.headers so Deepgram can call Claude with your key.
@@ -378,6 +415,8 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
     ...baseSettings,
     agent: {
       ...baseSettings.agent,
+      language: lang,
+      speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
       context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: greeting },

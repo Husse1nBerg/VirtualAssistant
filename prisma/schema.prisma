@@ -78,6 +78,7 @@ model Contact {
   name        String
   isVip       Boolean  @default(false)
   notes       String?  // e.g. "dad", "best client"
+  language    String   @default("en") // BCP-47 language code: "en", "ar", "fr", etc.
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
