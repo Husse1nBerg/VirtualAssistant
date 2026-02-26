@@ -94,13 +94,17 @@ function formatSummaryMessage(
     summary.urgency === 'high' ? '🔴' : summary.urgency === 'medium' ? '🟡' : '🟢';
   const message = dedupeReasonAndSummary(summary.reason_for_call, summary.summary);
 
+  const sentimentLabel = summary.sentiment && summary.sentiment !== 'neutral'
+    ? ` | Tone: ${summary.sentiment}`
+    : '';
+
   const lines = [
     `📞 Missed Call`,
     ``,
     `From: ${callerNumber}${summary.caller_name ? ` (${summary.caller_name})` : ''}`,
     summary.company ? `Company: ${summary.company}` : null,
     ``,
-    `${urgencyEmoji} ${summary.urgency.toUpperCase()}`,
+    `${urgencyEmoji} ${summary.urgency.toUpperCase()}${sentimentLabel}`,
     ``,
     message ? `Message: ${message}` : null,
     ``,
@@ -181,20 +185,31 @@ export async function sendPostCallNotifications(
 
 /**
  * Sends only the recording (MMS or link) — use when summary was already sent at call end.
+ * Includes caller name/number so the owner knows which call this recording belongs to.
  * Uses a proxy link so the recipient can open the recording without Twilio Basic Auth.
  */
 export async function sendRecordingOnlyNotification(
   callLogId: string,
-  _recordingUrl: string
+  _recordingUrl: string,
+  callerInfo?: { fromNumber: string; callerName: string | null }
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
   const to = env.OWNER_PHONE_NUMBER;
   const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLogId}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
+
+  const callerDisplay = callerInfo
+    ? callerInfo.callerName
+      ? `${callerInfo.callerName} (${callerInfo.fromNumber})`
+      : callerInfo.fromNumber
+    : 'Recent call';
+
+  const body = `📞 Call recording — ${callerDisplay}`;
+
   try {
     const msg = await getTwilioClient().messages.create({
-      body: '📞 Call recording',
+      body,
       from: env.TWILIO_PHONE_NUMBER,
       to,
       mediaUrl: [recordingProxyUrl],
@@ -214,7 +229,7 @@ export async function sendRecordingOnlyNotification(
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
-      await sendWhatsApp(`📞 Call recording: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
+      await sendWhatsApp(`${body}: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
     } catch (err) {
       log.warn({ callLogId, err }, 'WhatsApp recording notification failed');
     }
@@ -276,6 +291,59 @@ export async function sendSummaryOnlyFromCallLog(callLog: CallLogForNotification
       await sendWhatsApp(message, callLog.id, env.OWNER_WHATSAPP_NUMBER);
     } catch {
       // ignore
+    }
+  }
+}
+
+/**
+ * Sends post-SMS-conversation notification to the owner.
+ * Same as sendPostCallNotifications but with a 💬 header instead of 📞.
+ */
+export async function sendPostSmsNotifications(
+  summary: CallSummary,
+  callLogId: string,
+  senderNumber: string,
+  transcriptParts?: TranscriptLine[]
+): Promise<void> {
+  const log = getLogger();
+  const env = getEnv();
+  const urgencyEmoji =
+    summary.urgency === 'high' ? '🔴' : summary.urgency === 'medium' ? '🟡' : '🟢';
+  const message = dedupeReasonAndSummary(summary.reason_for_call, summary.summary);
+  const sentimentLabel = summary.sentiment && summary.sentiment !== 'neutral'
+    ? ` | Tone: ${summary.sentiment}`
+    : '';
+
+  const lines = [
+    `💬 Text Message`,
+    ``,
+    `From: ${senderNumber}${summary.caller_name ? ` (${summary.caller_name})` : ''}`,
+    ``,
+    `${urgencyEmoji} ${summary.urgency.toUpperCase()}${sentimentLabel}`,
+    ``,
+    message ? `Message: ${message}` : null,
+    ``,
+    summary.callback_window ? `Callback: ${summary.callback_window}` : null,
+    summary.promised_actions.length > 0
+      ? `Actions: ${summary.promised_actions.join('; ')}`
+      : null,
+  ];
+
+  const transcriptBlock = transcriptParts?.length
+    ? formatTranscriptLines(transcriptParts)
+    : '';
+  if (transcriptBlock) {
+    lines.push(``, `Transcript:`, transcriptBlock);
+  }
+
+  const msg = lines.filter(Boolean).join('\n');
+
+  await sendSMS(msg, callLogId, env.OWNER_PHONE_NUMBER);
+  if (env.OWNER_WHATSAPP_NUMBER) {
+    try {
+      await sendWhatsApp(msg, callLogId, env.OWNER_WHATSAPP_NUMBER);
+    } catch (err) {
+      log.warn({ callLogId, err }, 'WhatsApp failed for SMS notification');
     }
   }
 }

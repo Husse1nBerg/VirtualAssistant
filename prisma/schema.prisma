@@ -26,6 +26,7 @@ model CallLog {
   callbackWindow   String?
   promisedActions  String?  // JSON string array
   confidenceScore  Float?
+  sentiment        String?  // positive | neutral | frustrated | angry | distressed
   summary          String?
 
   // Metrics
@@ -49,7 +50,7 @@ model CallLog {
 model Transcript {
   id         String   @id @default(uuid())
   callLogId  String
-  callLog    CallLog  @relation(fields: [callLogId], references: [id])
+  callLog    CallLog  @relation(fields: [callLogId], references: [id], onDelete: Cascade)
   role       String   // caller | assistant | system
   content    String
   timestamp  DateTime @default(now())
@@ -60,7 +61,7 @@ model Transcript {
 model NotificationLog {
   id         String   @id @default(uuid())
   callLogId  String
-  callLog    CallLog  @relation(fields: [callLogId], references: [id])
+  callLog    CallLog  @relation(fields: [callLogId], references: [id], onDelete: Cascade)
   channel    String   // sms | whatsapp
   recipient  String
   status     String   // sent | failed | pending

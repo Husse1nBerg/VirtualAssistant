@@ -314,6 +314,7 @@ async function handleEndCallSummary(
     urgency: input.urgency || 'medium',
     callback_window: input.callback_window || null,
     promised_actions: input.promised_actions || [],
+    sentiment: input.sentiment || undefined,
     confidence_score: input.confidence_score ?? 0.5,
     summary: input.full_summary || 'No summary available.',
   };
@@ -412,6 +413,7 @@ async function endCall(session: CallSession, status: string): Promise<void> {
       urgency: summary.urgency,
       callbackWindow: summary.callback_window,
       promisedActions: JSON.stringify(summary.promised_actions),
+      sentiment: summary.sentiment ?? null,
       confidenceScore: summary.confidence_score,
       summary: summary.summary,
     });

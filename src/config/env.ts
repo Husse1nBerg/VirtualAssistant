@@ -40,6 +40,9 @@ const envSchema = z.object({
   // Dashboard (secret-URL web UI — leave empty to disable)
   DASHBOARD_TOKEN: z.string().default(''),
 
+  // Data retention (delete call logs older than N days; 0 = disabled)
+  DATA_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
+
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 });

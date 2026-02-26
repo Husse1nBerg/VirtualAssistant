@@ -123,6 +123,110 @@ export async function getRecentCalls(limit: number) {
   });
 }
 
+export async function searchCalls(query: string, limit = 50) {
+  const q = query.trim();
+  if (!q) return getRecentCalls(limit);
+  return getPrisma().callLog.findMany({
+    where: {
+      OR: [
+        { callerName: { contains: q } },
+        { company: { contains: q } },
+        { reasonForCall: { contains: q } },
+        { summary: { contains: q } },
+        { fromNumber: { contains: q } },
+      ],
+    },
+    orderBy: { startedAt: 'desc' },
+    take: limit,
+    include: { transcripts: true },
+  });
+}
+
+export interface CallAnalytics {
+  totalCalls: number;
+  avgDurationSeconds: number | null;
+  urgencyDistribution: { urgency: string; count: number }[];
+  topCallers: { fromNumber: string; callerName: string | null; count: number }[];
+  callsLast7Days: number;
+  callsLast30Days: number;
+}
+
+export async function getCallAnalytics(): Promise<CallAnalytics> {
+  const prisma = getPrisma();
+
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const [
+    totalCalls,
+    callsLast7Days,
+    callsLast30Days,
+    urgencyRaw,
+    durationRaw,
+  ] = await Promise.all([
+    prisma.callLog.count(),
+    prisma.callLog.count({ where: { startedAt: { gte: sevenDaysAgo } } }),
+    prisma.callLog.count({ where: { startedAt: { gte: thirtyDaysAgo } } }),
+    prisma.callLog.groupBy({
+      by: ['urgency'],
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+    }),
+    prisma.callLog.aggregate({ _avg: { durationSeconds: true } }),
+  ]);
+
+  // Top callers: group by fromNumber, pick name from most recent call, take top 5
+  const topCallersRaw = await prisma.callLog.groupBy({
+    by: ['fromNumber'],
+    _count: { id: true },
+    orderBy: { _count: { id: 'desc' } },
+    take: 5,
+  });
+
+  const topCallers = await Promise.all(
+    topCallersRaw.map(async (row) => {
+      const recent = await prisma.callLog.findFirst({
+        where: { fromNumber: row.fromNumber },
+        orderBy: { startedAt: 'desc' },
+        select: { callerName: true },
+      });
+      return {
+        fromNumber: row.fromNumber,
+        callerName: recent?.callerName ?? null,
+        count: row._count.id,
+      };
+    })
+  );
+
+  const urgencyDistribution = urgencyRaw.map((r) => ({
+    urgency: r.urgency ?? 'unknown',
+    count: r._count.id,
+  }));
+
+  return {
+    totalCalls,
+    avgDurationSeconds: durationRaw._avg.durationSeconds ?? null,
+    urgencyDistribution,
+    topCallers,
+    callsLast7Days,
+    callsLast30Days,
+  };
+}
+
+/**
+ * Delete call logs (and cascaded transcripts + notifications) older than `days` days.
+ * Returns the number of deleted records.
+ */
+export async function deleteOldCallLogs(days: number): Promise<number> {
+  if (days <= 0) return 0;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const result = await getPrisma().callLog.deleteMany({
+    where: { startedAt: { lt: cutoff } },
+  });
+  return result.count;
+}
+
 /** Update notification log by Twilio message SID (for delivery status callbacks). */
 export async function updateNotificationByMessageId(
   messageId: string,

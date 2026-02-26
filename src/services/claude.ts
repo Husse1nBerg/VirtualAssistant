@@ -91,6 +91,7 @@ export interface CallSummary {
   urgency: 'low' | 'medium' | 'high';
   callback_window: string | null;
   promised_actions: string[];
+  sentiment?: 'positive' | 'neutral' | 'frustrated' | 'angry' | 'distressed';
   confidence_score: number;
   summary: string;
 }

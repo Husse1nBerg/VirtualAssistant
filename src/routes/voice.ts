@@ -195,7 +195,10 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
     const callLog = await getCallLogBySid(callSid);
     if (callLog) {
       await updateCallLog(callLog.id, { recordingSid, recordingUrl });
-      sendRecordingOnlyNotification(callLog.id, recordingUrl).catch((err) =>
+      sendRecordingOnlyNotification(callLog.id, recordingUrl, {
+        fromNumber: callLog.fromNumber,
+        callerName: callLog.callerName,
+      }).catch((err) =>
         log.error({ callSid, err }, 'Failed to send recording notification')
       );
     } else {

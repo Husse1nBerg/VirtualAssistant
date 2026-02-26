@@ -11,6 +11,8 @@ import healthRoutes from './routes/health';
 import dashboardRoutes from './routes/dashboard';
 import { handleMediaStreamConnection } from './services/callOrchestrator';
 import { getPrisma, disconnectDb } from './services/database';
+import { startRetentionScheduler, stopRetentionScheduler } from './services/retention';
+import { startHealthMonitor } from './services/healthAlert';
 
 // ── Bootstrap ────────────────────────────────────────
 
@@ -24,6 +26,12 @@ async function main() {
   // Connect to database
   await getPrisma().$connect();
   log.info('Database connected');
+
+  // Start health monitor (uncaught exception / unhandled rejection → SMS alert)
+  startHealthMonitor();
+
+  // Start data retention scheduler (no-op if DATA_RETENTION_DAYS=0)
+  startRetentionScheduler();
 
   // ── Express App ──────────────────────────────────
 
@@ -71,6 +79,7 @@ async function main() {
     log.info(`Server listening on port ${env.PORT}`);
     log.info(`Health check: http://localhost:${env.PORT}/health`);
     log.info(`Voice webhook: ${env.BASE_URL}/voice/inbound`);
+    log.info(`SMS webhook:   ${env.BASE_URL}/sms/inbound`);
     log.info(`Media stream: ${env.BASE_URL.replace(/^http/, 'ws')}/media-stream`);
   });
 
@@ -90,6 +99,9 @@ async function main() {
     server.close(() => {
       log.info('HTTP server closed');
     });
+
+    // Stop retention scheduler
+    stopRetentionScheduler();
 
     // Disconnect DB
     await disconnectDb();

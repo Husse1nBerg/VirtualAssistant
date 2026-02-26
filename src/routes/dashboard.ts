@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
-import { getRecentCalls, getAllContacts, upsertContact, deleteContact } from '../services/database';
+import { getRecentCalls, getAllContacts, upsertContact, deleteContact, searchCalls, getCallAnalytics, type CallAnalytics } from '../services/database';
 import type { CallLog, Transcript } from '@prisma/client';
 import type { Contact } from '../services/database';
 
@@ -41,7 +41,74 @@ function urgencyBadge(urgency: string | null): string {
   return `<span class="badge ${cls}">${emoji} ${u.toUpperCase()}</span>`;
 }
 
-function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], token: string): string {
+function sentimentBadge(sentiment: string | null): string {
+  if (!sentiment || sentiment === 'neutral') return '';
+  const map: Record<string, string> = {
+    positive: 'badge-positive',
+    frustrated: 'badge-frustrated',
+    angry: 'badge-angry',
+    distressed: 'badge-angry',
+  };
+  const cls = map[sentiment] || 'badge-low';
+  const emoji = sentiment === 'positive' ? '😊' : sentiment === 'frustrated' ? '😤' : '😠';
+  return ` <span class="badge ${cls}">${emoji} ${sentiment}</span>`;
+}
+
+function renderAnalytics(analytics: CallAnalytics): string {
+  const avgDur = analytics.avgDurationSeconds !== null
+    ? formatDuration(Math.round(analytics.avgDurationSeconds))
+    : '—';
+
+  const urgencyOrder = ['high', 'medium', 'low', 'unknown'];
+  const urgencyMap = Object.fromEntries(analytics.urgencyDistribution.map((u) => [u.urgency, u.count]));
+  const urgencyHtml = urgencyOrder
+    .filter((u) => (urgencyMap[u] ?? 0) > 0)
+    .map((u) => {
+      const emoji = u === 'high' ? '🔴' : u === 'medium' ? '🟡' : u === 'low' ? '🟢' : '⚪';
+      const pct = analytics.totalCalls > 0 ? Math.round(((urgencyMap[u] ?? 0) / analytics.totalCalls) * 100) : 0;
+      return `<div class="stat-row"><span>${emoji} ${u.toUpperCase()}</span><span>${urgencyMap[u] ?? 0} (${pct}%)</span></div>`;
+    })
+    .join('');
+
+  const topCallersHtml = analytics.topCallers.length === 0
+    ? '<div class="stat-row"><span style="color:#aaa">None yet</span></div>'
+    : analytics.topCallers.map((c) =>
+        `<div class="stat-row"><span>${escapeHtml(c.callerName || c.fromNumber)}</span><span>${c.count} call${c.count !== 1 ? 's' : ''}</span></div>`
+      ).join('');
+
+  return `
+    <h2>Analytics</h2>
+    <div class="analytics-grid">
+      <div class="stat-card">
+        <div class="stat-value">${analytics.totalCalls}</div>
+        <div class="stat-label">Total Calls</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${analytics.callsLast7Days}</div>
+        <div class="stat-label">Last 7 Days</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${analytics.callsLast30Days}</div>
+        <div class="stat-label">Last 30 Days</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${avgDur}</div>
+        <div class="stat-label">Avg Duration</div>
+      </div>
+    </div>
+    <div class="analytics-detail-grid">
+      <div class="card">
+        <h3>Urgency Distribution</h3>
+        ${urgencyHtml || '<p style="color:#aaa;font-size:.82rem">No data yet</p>'}
+      </div>
+      <div class="card">
+        <h3>Top Callers</h3>
+        ${topCallersHtml}
+      </div>
+    </div>`;
+}
+
+function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], token: string, searchQuery = '', analytics?: CallAnalytics): string {
   const callRows = calls.map((call) => {
     const callerDisplay = call.callerName
       ? `${escapeHtml(call.callerName)}<br><span class="phone">${escapeHtml(call.fromNumber)}</span>`
@@ -53,6 +120,9 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
       ? `<a href="/voice/recording/${call.id}" target="_blank" class="btn">▶ Recording</a>`
       : '';
     const callbackBtn = `<a href="tel:${escapeHtml(call.fromNumber)}" class="btn">📞 Call back</a>`;
+    const lowConfidenceBadge = (call.confidenceScore !== null && call.confidenceScore < 0.5)
+      ? `<span class="badge badge-review" title="Confidence ${Math.round((call.confidenceScore ?? 0) * 100)}% — summary may be incomplete">⚠ Review transcript</span>`
+      : '';
 
     const transcriptLines = (call.transcripts || [])
       .map((t) => {
@@ -65,13 +135,18 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
       ? `<details><summary>View transcript</summary><div class="transcript">${transcriptLines}</div></details>`
       : '';
 
+    const directionLabel = call.direction === 'sms'
+      ? `<span class="badge badge-low" style="background:#e3f2fd;color:#1565c0">💬 SMS</span>`
+      : `<span class="badge badge-low" style="background:#f3e5f5;color:#6a1b9a">📞 Call</span>`;
+
     return `<tr>
       <td>${callerDisplay}</td>
       <td class="nowrap">${escapeHtml(formatDate(call.startedAt))}</td>
+      <td>${directionLabel}</td>
       <td class="summary-text">${summaryText}</td>
-      <td>${urgencyBadge(call.urgency)}</td>
+      <td>${urgencyBadge(call.urgency)}${sentimentBadge(call.sentiment)}</td>
       <td class="nowrap">${escapeHtml(formatDuration(call.durationSeconds))}</td>
-      <td class="actions">${recordingBtn} ${callbackBtn}${transcriptSection}</td>
+      <td class="actions">${lowConfidenceBadge}${lowConfidenceBadge ? '<br>' : ''}${recordingBtn} ${callbackBtn}${transcriptSection}</td>
     </tr>`;
   }).join('\n');
 
@@ -119,6 +194,10 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
     .badge-high{background:#fde8e8;color:#c0392b}
     .badge-medium{background:#fef9e7;color:#7d6608}
     .badge-low{background:#eafaf1;color:#1e8449}
+    .badge-positive{background:#e8f5e9;color:#1b5e20}
+    .badge-frustrated{background:#fff3e0;color:#bf360c}
+    .badge-angry{background:#fce4ec;color:#880e4f}
+    .badge-review{background:#fff8e1;color:#e65100;cursor:help}
     .btn{display:inline-block;padding:4px 10px;background:#555;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.78rem;text-decoration:none;margin:2px 1px;vertical-align:middle}
     .btn:hover{background:#333}
     .btn-danger{background:#c0392b}.btn-danger:hover{background:#922b21}
@@ -139,16 +218,32 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
     input:focus{outline:none;border-color:#2980b9}
     .form-actions{margin-top:14px;display:flex;gap:8px;align-items:center}
     #form-msg{font-size:.82rem;margin-top:8px}
+    .analytics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:16px}
+    .stat-card{background:#fff;border-radius:8px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.08);text-align:center}
+    .stat-value{font-size:1.8rem;font-weight:700;color:#2c3e50}
+    .stat-label{font-size:.75rem;color:#888;margin-top:4px;text-transform:uppercase;letter-spacing:.05em}
+    .analytics-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+    .stat-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f5f5f5;font-size:.84rem}
+    .stat-row:last-child{border-bottom:none}
+    @media(max-width:640px){.analytics-detail-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <div class="container">
     <h1>📞 Call Dashboard</h1>
 
-    <h2>Recent Calls (${calls.length})</h2>
+    ${analytics ? renderAnalytics(analytics) : ''}
+
+    <form method="GET" action="/dashboard/${escapeHtml(token)}" style="margin-bottom:16px;display:flex;gap:8px">
+      <input type="text" name="q" value="${escapeHtml(searchQuery)}" placeholder="Search by name, company, keyword…" style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:5px;font-size:.87rem">
+      <button type="submit" class="btn btn-primary" style="padding:8px 16px">Search</button>
+      ${searchQuery ? `<a href="/dashboard/${escapeHtml(token)}" class="btn">Clear</a>` : ''}
+    </form>
+
+    <h2>${searchQuery ? `Search results for "${escapeHtml(searchQuery)}" (${calls.length})` : `Recent Calls (${calls.length})`}</h2>
     ${calls.length === 0 ? noCallsMsg : `<table>
       <thead><tr>
-        <th>Caller</th><th>Date</th><th>Summary</th><th>Urgency</th><th>Duration</th><th>Actions</th>
+        <th>Caller</th><th>Date</th><th>Via</th><th>Summary</th><th>Urgency</th><th>Duration</th><th>Actions</th>
       </tr></thead>
       <tbody>${callRows}</tbody>
     </table>`}
@@ -269,8 +364,13 @@ router.get('/:token', async (req: Request, res: Response) => {
     return res.status(404).send('Not found');
   }
   try {
-    const [calls, contacts] = await Promise.all([getRecentCalls(30), getAllContacts()]);
-    return res.send(renderDashboard(calls as CallWithTranscripts[], contacts, env.DASHBOARD_TOKEN));
+    const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const [calls, contacts, analytics] = await Promise.all([
+      searchQuery ? searchCalls(searchQuery, 50) : getRecentCalls(50),
+      getAllContacts(),
+      getCallAnalytics(),
+    ]);
+    return res.send(renderDashboard(calls as CallWithTranscripts[], contacts, env.DASHBOARD_TOKEN, searchQuery, analytics));
   } catch (err) {
     getLogger().error({ err }, 'Dashboard render failed');
     return res.status(500).send('Internal error');
