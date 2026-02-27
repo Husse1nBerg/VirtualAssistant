@@ -245,18 +245,35 @@ function handleAgentEvent(session: CallSession, event: any): void {
     }
 
     case 'FunctionCallRequest': {
-      // Agent wants to call one of our defined functions
-      log.info(
-        { callId: session.callId, functionName: event.function_name, params: event.input },
-        'Agent function call'
-      );
+      // Deepgram v1 sends an array of function calls (OpenAI tool-call format):
+      //   event.functions = [{ id, name, arguments: "{...json...}" }]
+      // Older/flat format fallback: event.function_name / event.input / event.function_call_id
+      const fns: { id?: string; name?: string; arguments?: unknown }[] =
+        Array.isArray(event.functions) && event.functions.length > 0
+          ? event.functions
+          : [{ id: event.function_call_id, name: event.function_name, arguments: event.input }];
 
-      if (event.function_name === 'end_call_summary') {
-        handleEndCallSummary(session, event.input, event.function_call_id);
-      } else if (event.function_name === 'request_transfer') {
-        handleTransferRequest(session, event.input, event.function_call_id).catch((err) =>
-          log.error({ callId: session.callId, err }, 'Transfer request failed')
-        );
+      for (const fn of fns) {
+        const functionName = fn.name;
+        const functionCallId = fn.id ?? '';
+        let input: Record<string, unknown> = {};
+        try {
+          input = typeof fn.arguments === 'string'
+            ? JSON.parse(fn.arguments)
+            : (fn.arguments as Record<string, unknown>) ?? {};
+        } catch { /* leave input as {} */ }
+
+        log.info({ callId: session.callId, functionName, input }, 'Agent function call');
+
+        if (functionName === 'end_call_summary') {
+          handleEndCallSummary(session, input, functionCallId);
+        } else if (functionName === 'request_transfer') {
+          handleTransferRequest(session, input, functionCallId).catch((err) =>
+            log.error({ callId: session.callId, err }, 'Transfer request failed')
+          );
+        } else {
+          log.warn({ callId: session.callId, functionName }, 'Unknown function call — ignoring');
+        }
       }
       break;
     }
