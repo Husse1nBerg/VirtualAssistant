@@ -340,13 +340,13 @@ async function handleEndCallSummary(
 
   log.info({ callId: session.callId, summary }, 'Call summary extracted via function call');
 
-  // Send function response back to agent so it can continue (say goodbye)
+  // Send function response back to agent so it can continue (say goodbye).
+  // Deepgram v1 expects the same functions-array format it sends us.
   if (session.agentWs?.readyState === WebSocket.OPEN) {
     session.agentWs.send(
       JSON.stringify({
         type: 'FunctionCallResponse',
-        function_call_id: functionCallId,
-        output: 'Summary captured. You may now say goodbye to the caller.',
+        functions: [{ id: functionCallId, output: 'Summary captured. You may now say goodbye to the caller.' }],
       })
     );
   }
@@ -365,13 +365,13 @@ async function handleTransferRequest(
 
   log.info({ callId: session.callId, reason }, 'Transfer requested');
 
-  // Instruct agent to say "please hold" before redirect
+  // Instruct agent to say "please hold" before redirect.
+  // Deepgram v1 expects the same functions-array format it sends us.
   if (session.agentWs?.readyState === WebSocket.OPEN) {
     session.agentWs.send(
       JSON.stringify({
         type: 'FunctionCallResponse',
-        function_call_id: functionCallId,
-        output: "Transfer initiated. Tell the caller: 'Let me try to connect you right now — please hold.'",
+        functions: [{ id: functionCallId, output: "Transfer initiated. Tell the caller: 'Let me try to connect you right now — please hold.'" }],
       })
     );
   }
