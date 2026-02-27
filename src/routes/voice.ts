@@ -319,6 +319,7 @@ router.post('/transfer/:callLogId', twilioWebhookAuth, async (req: Request, res:
   const callLogId = req.params.callLogId as string;
 
   const twiml = new VoiceResponse();
+  twiml.say({ voice: 'Polly.Joanna' }, 'Please hold while I connect you.');
   const dial = twiml.dial({
     callerId: env.TWILIO_PHONE_NUMBER,
     timeout: 20,

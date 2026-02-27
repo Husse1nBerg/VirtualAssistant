@@ -373,22 +373,6 @@ async function handleTransferRequest(
 
   log.info({ callId: session.callId, reason }, 'Transfer requested');
 
-  if (session.agentWs?.readyState === WebSocket.OPEN) {
-    if (clientSide) {
-      // client_side: Deepgram does not want a FunctionCallResponse — inject speech directly
-      session.agentWs.send(JSON.stringify({
-        type: 'InjectAgentMessage',
-        message: "Of course — let me try to connect you with Hussein right now. Please hold.",
-      }));
-    } else {
-      session.agentWs.send(JSON.stringify({
-        type: 'FunctionCallResponse',
-        function_call_id: functionCallId,
-        output: "Transfer initiated. Tell the caller: 'Let me try to connect you right now — please hold.'",
-      }));
-    }
-  }
-
   // Fire escalation SMS (fire-and-forget)
   sendEscalationSMS(session.callId, session.fromNumber, reason).catch((err) =>
     log.error({ callId: session.callId, err }, 'Failed to send escalation SMS')
