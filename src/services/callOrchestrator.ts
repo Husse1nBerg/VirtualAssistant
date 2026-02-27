@@ -245,21 +245,18 @@ function handleAgentEvent(session: CallSession, event: any): void {
     }
 
     case 'FunctionCallRequest': {
-      // Log full raw event so we can see the exact Deepgram structure
-      log.info({ callId: session.callId, rawEvent: event }, 'FunctionCallRequest raw event');
-
-      // Deepgram v1 sends an array of function calls (OpenAI tool-call format):
-      //   event.functions = [{ id, name, arguments: "{...json...}" }]
-      // Older/flat format fallback: event.function_name / event.input / event.function_call_id
-      const fns: { id?: string; name?: string; arguments?: unknown }[] =
+      // Deepgram v1: functions array with { id, name, arguments, client_side }
+      // client_side:true means Deepgram does NOT want a FunctionCallResponse back —
+      // use InjectAgentMessage to make the agent speak instead.
+      const fns: { id?: string; name?: string; arguments?: unknown; client_side?: boolean }[] =
         Array.isArray(event.functions) && event.functions.length > 0
           ? event.functions
           : [{ id: event.function_call_id, name: event.function_name, arguments: event.input }];
 
       for (const fn of fns) {
         const functionName = fn.name;
-        // ID may be on the fn object or at the top-level event — try both
         const functionCallId = fn.id ?? (event.function_call_id as string | undefined) ?? '';
+        const clientSide = fn.client_side === true;
         let input: Record<string, unknown> = {};
         try {
           input = typeof fn.arguments === 'string'
@@ -267,12 +264,12 @@ function handleAgentEvent(session: CallSession, event: any): void {
             : (fn.arguments as Record<string, unknown>) ?? {};
         } catch { /* leave input as {} */ }
 
-        log.info({ callId: session.callId, functionName, functionCallId, input }, 'Agent function call');
+        log.info({ callId: session.callId, functionName, functionCallId, clientSide, input }, 'Agent function call');
 
         if (functionName === 'end_call_summary') {
-          handleEndCallSummary(session, input, functionCallId);
+          handleEndCallSummary(session, input, functionCallId, clientSide);
         } else if (functionName === 'request_transfer') {
-          handleTransferRequest(session, input, functionCallId).catch((err) =>
+          handleTransferRequest(session, input, functionCallId, clientSide).catch((err) =>
             log.error({ callId: session.callId, err }, 'Transfer request failed')
           );
         } else {
@@ -324,7 +321,8 @@ function forwardAudioToTwilio(session: CallSession, audioData: Buffer): void {
 async function handleEndCallSummary(
   session: CallSession,
   input: any,
-  functionCallId: string
+  functionCallId: string,
+  clientSide = false
 ): Promise<void> {
   const log = getLogger();
 
@@ -344,16 +342,20 @@ async function handleEndCallSummary(
 
   log.info({ callId: session.callId, summary }, 'Call summary extracted via function call');
 
-  // Send function response back to agent so it can continue (say goodbye).
   if (session.agentWs?.readyState === WebSocket.OPEN) {
-    log.info({ callId: session.callId, functionCallId }, 'Sending FunctionCallResponse for end_call_summary');
-    session.agentWs.send(
-      JSON.stringify({
+    if (clientSide) {
+      // client_side: Deepgram does not want a FunctionCallResponse — inject speech directly
+      session.agentWs.send(JSON.stringify({
+        type: 'InjectAgentMessage',
+        message: 'Thanks for calling. Take care!',
+      }));
+    } else {
+      session.agentWs.send(JSON.stringify({
         type: 'FunctionCallResponse',
         function_call_id: functionCallId,
         output: 'Summary captured. You may now say goodbye to the caller.',
-      })
-    );
+      }));
+    }
   }
 }
 
@@ -362,7 +364,8 @@ async function handleEndCallSummary(
 async function handleTransferRequest(
   session: CallSession,
   input: any,
-  functionCallId: string
+  functionCallId: string,
+  clientSide = false
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
@@ -370,16 +373,20 @@ async function handleTransferRequest(
 
   log.info({ callId: session.callId, reason }, 'Transfer requested');
 
-  // Instruct agent to say "please hold" before redirect.
   if (session.agentWs?.readyState === WebSocket.OPEN) {
-    log.info({ callId: session.callId, functionCallId }, 'Sending FunctionCallResponse for request_transfer');
-    session.agentWs.send(
-      JSON.stringify({
+    if (clientSide) {
+      // client_side: Deepgram does not want a FunctionCallResponse — inject speech directly
+      session.agentWs.send(JSON.stringify({
+        type: 'InjectAgentMessage',
+        message: "Of course — let me try to connect you with Hussein right now. Please hold.",
+      }));
+    } else {
+      session.agentWs.send(JSON.stringify({
         type: 'FunctionCallResponse',
         function_call_id: functionCallId,
         output: "Transfer initiated. Tell the caller: 'Let me try to connect you right now — please hold.'",
-      })
-    );
+      }));
+    }
   }
 
   // Fire escalation SMS (fire-and-forget)

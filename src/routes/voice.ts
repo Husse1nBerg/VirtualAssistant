@@ -350,21 +350,6 @@ router.post('/transfer-status/:callLogId', twilioWebhookAuth, async (req: Reques
       "I wasn't able to reach Hussein directly. I'll make sure he gets your message and calls you back as soon as possible."
     );
     twiml.hangup();
-
-    // Notify Hussein that the caller tried to reach him but got no answer
-    try {
-      const callLog = await getCallLogById(callLogId);
-      const callerDisplay = callLog?.callerName || callLog?.fromNumber || req.body.From || 'Unknown caller';
-      const callerNumber = callLog?.fromNumber || req.body.From || 'unknown';
-      const body = `🚨 ${callerDisplay} tried to reach you but got no answer. Call them: ${callerNumber}`;
-      await getTwilioClient().messages.create({
-        body,
-        from: env.TWILIO_PHONE_NUMBER,
-        to: env.OWNER_PHONE_NUMBER,
-      });
-    } catch (err) {
-      log.error({ callLogId, err }, 'Failed to send transfer no-answer SMS');
-    }
   }
 
   res.type('text/xml');
