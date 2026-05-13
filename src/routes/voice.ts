@@ -13,9 +13,16 @@ const router = Router();
 // Cache greeting audio keyed by greeting text (supports generic + personalized greetings).
 const greetingCache = new Map<string, Buffer>();
 
-function buildGreetingText(callerName?: string): string {
+function normalizePhoneForCompare(raw: string): string {
+  return raw.replace(/\D/g, '');
+}
+
+function buildGreetingText(callerName?: string, isCommandMode?: boolean): string {
+  if (isCommandMode) {
+    return "Voice commands. What would you like me to do? You can say things like: text John I'll be late, or remind me to call Sarah tomorrow.";
+  }
   if (callerName) {
-    return `Hi ${callerName}! This is Hussein's assistant — how can I help you today?`;
+    return `Hi ${callerName}! I'm Sky, Hussein's assistant — how can I help you today?`;
   }
   return getGreetingText();
 }
@@ -31,7 +38,8 @@ router.get('/greeting', async (req: Request, res: Response) => {
   const log = getLogger();
   const env = getEnv();
   const callerName = typeof req.query.caller === 'string' ? req.query.caller : undefined;
-  const greetingText = buildGreetingText(callerName);
+  const isCommandMode = req.query.mode === 'command';
+  const greetingText = buildGreetingText(callerName, isCommandMode);
 
   const cached = greetingCache.get(greetingText);
   if (cached) {
@@ -128,15 +136,23 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
     // Create call log immediately so short calls (hang-up during greeting) are still recorded.
     await createCallLog({ twilioCallSid: callSid, fromNumber: from, toNumber: to });
 
-    // Look up contact for personalized greeting (non-fatal if it fails)
+    const ownerDigits = normalizePhoneForCompare(env.OWNER_PHONE_NUMBER);
+    const fromDigits = normalizePhoneForCompare(from);
+    const isOwnerCall = ownerDigits && fromDigits && ownerDigits === fromDigits;
+
+    // Look up contact for personalized greeting (non-fatal if it fails). Skip when owner is calling for voice commands.
     let greetingParams = '';
-    try {
-      const contact = await getContactByPhone(from);
-      if (contact) {
-        greetingParams = `?caller=${encodeURIComponent(contact.name)}&vip=${contact.isVip}`;
+    if (isOwnerCall) {
+      greetingParams = '?mode=command';
+    } else {
+      try {
+        const contact = await getContactByPhone(from);
+        if (contact) {
+          greetingParams = `?caller=${encodeURIComponent(contact.name)}&vip=${contact.isVip}`;
+        }
+      } catch (err) {
+        log.warn({ err }, 'Failed to look up contact for greeting — using generic greeting');
       }
-    } catch (err) {
-      log.warn({ err }, 'Failed to look up contact for greeting — using generic greeting');
     }
 
     const twiml = new VoiceResponse();
@@ -159,6 +175,9 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
     stream.parameter({ name: 'from', value: from });
     stream.parameter({ name: 'to', value: to });
     stream.parameter({ name: 'callSid', value: callSid });
+    if (isOwnerCall) {
+      stream.parameter({ name: 'mode', value: 'command' });
+    }
 
     return res.send(twiml.toString());
   } catch (err) {
@@ -339,16 +358,24 @@ router.post('/transfer/:callLogId', twilioWebhookAuth, async (req: Request, res:
  */
 router.post('/transfer-status/:callLogId', twilioWebhookAuth, async (req: Request, res: Response) => {
   const log = getLogger();
-  const env = getEnv();
   const callLogId = req.params.callLogId as string;
   const dialCallStatus = req.body.DialCallStatus as string;
 
+  log.info({ callLogId, dialCallStatus }, 'Transfer status received');
+
   const twiml = new VoiceResponse();
 
-  if (dialCallStatus !== 'completed') {
+  if (dialCallStatus === 'completed') {
+    // Hussein answered and the conversation ended naturally — just close the caller's leg.
+    twiml.hangup();
+  } else if (dialCallStatus === 'canceled') {
+    // Caller hung up while waiting — nothing to say.
+    twiml.hangup();
+  } else {
+    // no-answer, busy, failed — Hussein couldn't take the call.
     twiml.say(
       { voice: 'Polly.Joanna' },
-      "I wasn't able to reach Hussein directly. I'll make sure he gets your message and calls you back as soon as possible."
+      "I'm sorry, I tried reaching Hussein but he can't take your call at the moment. I'll have him call you back as soon as possible. Thank you."
     );
     twiml.hangup();
   }

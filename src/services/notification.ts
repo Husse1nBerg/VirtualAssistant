@@ -357,14 +357,28 @@ export async function sendEscalationSMS(callLogId: string, fromNumber: string, r
   await sendSMS(body, callLogId, env.OWNER_PHONE_NUMBER);
 }
 
+/**
+ * Send an SMS to an arbitrary recipient (e.g. for voice command "text John ...").
+ * Uses the same Twilio path and logs to the given call log for audit.
+ */
+export async function sendSMSToRecipient(body: string, toPhone: string, callLogId: string): Promise<void> {
+  await sendSMS(body, callLogId, toPhone);
+}
+
+const SMS_MAX_CHARS = 1590;
+
 async function sendSMS(body: string, callLogId: string, to: string): Promise<void> {
   const log = getLogger();
   const env = getEnv();
   const statusCallback = `${env.BASE_URL}/sms/status`;
 
+  const truncated = body.length > SMS_MAX_CHARS
+    ? body.slice(0, SMS_MAX_CHARS - 4) + '...'
+    : body;
+
   try {
     const msg = await getTwilioClient().messages.create({
-      body,
+      body: truncated,
       from: env.TWILIO_PHONE_NUMBER,
       to,
       statusCallback,
@@ -411,9 +425,13 @@ async function sendWhatsApp(body: string, callLogId: string, to: string): Promis
   const whatsappFrom = `whatsapp:${fromNumber}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
 
+  const truncated = body.length > SMS_MAX_CHARS
+    ? body.slice(0, SMS_MAX_CHARS - 4) + '...'
+    : body;
+
   try {
     const msg = await getTwilioClient().messages.create({
-      body,
+      body: truncated,
       from: whatsappFrom,
       to: whatsappTo,
       statusCallback,

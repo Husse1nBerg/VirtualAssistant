@@ -81,8 +81,23 @@ export async function createNotification(input: CreateNotificationInput) {
 
 // ── Contact Operations ───────────────────────────────
 
+/** Normalize to E.164 digits-only+plus for consistent matching. */
+function normalizePhone(raw: string): string {
+  // Strip spaces, dashes, parentheses, dots
+  const stripped = raw.replace(/[\s\-().]/g, '');
+  // Ensure leading +
+  return stripped.startsWith('+') ? stripped : `+${stripped}`;
+}
+
 export async function getContactByPhone(phoneNumber: string): Promise<Contact | null> {
-  return getPrisma().contact.findUnique({ where: { phoneNumber } });
+  const normalized = normalizePhone(phoneNumber);
+  // Try exact match first, then normalized form
+  return (
+    (await getPrisma().contact.findUnique({ where: { phoneNumber } })) ??
+    (normalized !== phoneNumber
+      ? getPrisma().contact.findUnique({ where: { phoneNumber: normalized } })
+      : null)
+  );
 }
 
 export async function upsertContact(input: {
@@ -92,10 +107,11 @@ export async function upsertContact(input: {
   notes?: string;
   language?: string;
 }): Promise<Contact> {
+  const phoneNumber = normalizePhone(input.phoneNumber);
   return getPrisma().contact.upsert({
-    where: { phoneNumber: input.phoneNumber },
+    where: { phoneNumber },
     update: { name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null, language: input.language ?? 'en' },
-    create: { phoneNumber: input.phoneNumber, name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null, language: input.language ?? 'en' },
+    create: { phoneNumber, name: input.name, isVip: input.isVip ?? false, notes: input.notes ?? null, language: input.language ?? 'en' },
   });
 }
 
@@ -105,6 +121,26 @@ export async function deleteContact(id: string): Promise<void> {
 
 export async function getAllContacts(): Promise<Contact[]> {
   return getPrisma().contact.findMany({ orderBy: { name: 'asc' } });
+}
+
+/**
+ * Resolve a contact by name or phone. Use for voice commands like "text John ...".
+ * If identifier looks like a phone number (E.164-ish), look up by phone; otherwise search by name (case-insensitive).
+ */
+export async function getContactByNameOrPhone(identifier: string): Promise<Contact | null> {
+  const trimmed = identifier.trim();
+  if (!trimmed) return null;
+  const digitsOnly = trimmed.replace(/\D/g, '');
+  if (digitsOnly.length >= 10) {
+    const withPlus = trimmed.startsWith('+') ? trimmed : `+${digitsOnly}`;
+    return getContactByPhone(withPlus);
+  }
+  const all = await getPrisma().contact.findMany({ orderBy: { name: 'asc' } });
+  const lower = trimmed.toLowerCase();
+  const exact = all.find((c) => c.name.toLowerCase() === lower);
+  if (exact) return exact;
+  const contains = all.find((c) => c.name.toLowerCase().includes(lower) || lower.includes(c.name.toLowerCase()));
+  return contains ?? null;
 }
 
 export async function getRecentCallsByNumber(phoneNumber: string, limit = 5) {

@@ -2,16 +2,22 @@ import { WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { getLogger } from '../utils/logger';
 import { getEnv } from '../config';
-import { buildAgentSettings, buildAgentSettingsWithClaude } from './agentPrompt';
+import {
+  buildAgentSettings,
+  buildAgentSettingsWithClaude,
+  buildCommandAgentSettings,
+  buildCommandAgentSettingsWithClaude,
+} from './agentPrompt';
 import {
   createCallLog,
   getCallLogBySid,
   updateCallLog,
   addTranscript,
   getContactByPhone,
+  getContactByNameOrPhone,
   getRecentCallsByNumber,
 } from './database';
-import { sendPostCallNotifications, sendEscalationSMS } from './notification';
+import { sendPostCallNotifications, sendEscalationSMS, sendSMSToRecipient } from './notification';
 import { getTwilioClient } from './twilioClient';
 import type { CallSummary } from './claude';
 
@@ -29,6 +35,7 @@ interface CallSession {
   ended: boolean;
   transcriptParts: { role: string; content: string }[];
   summary: CallSummary | null;
+  isCommandMode?: boolean;  // true when owner called to give voice commands
 }
 
 // ── Active Sessions ──────────────────────────────────
@@ -99,6 +106,7 @@ async function initializeSession(
 
   const fromNumber = startData.customParameters?.from || 'unknown';
   const toNumber = startData.customParameters?.to || 'unknown';
+  const isCommandMode = startData.customParameters?.mode === 'command';
 
   // Reuse the call log created in /inbound; fall back to creating one if missing.
   const callLog =
@@ -131,6 +139,7 @@ async function initializeSession(
     ended: false,
     transcriptParts: [],
     summary: null,
+    isCommandMode,
   };
 
   sessions.set(startData.streamSid, session);
@@ -151,12 +160,16 @@ async function initializeSession(
   session.agentWs = agentWs;
 
   agentWs.on('open', () => {
-    log.info({ callId: session.callId }, 'Deepgram Agent WebSocket connected');
+    log.info({ callId: session.callId, isCommandMode }, 'Deepgram Agent WebSocket connected');
 
-    // Send agent configuration: OpenAI (managed by Deepgram) or Anthropic
-    const settings = env.USE_OPENAI_FOR_AGENT
-      ? buildAgentSettings(env.DEEPGRAM_API_KEY, callerCtx)
-      : buildAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || '', callerCtx);
+    // Send agent configuration: command mode (owner) or message-taking mode (callers)
+    const settings = isCommandMode
+      ? (env.USE_OPENAI_FOR_AGENT
+          ? buildCommandAgentSettings(env.DEEPGRAM_API_KEY)
+          : buildCommandAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || ''))
+      : (env.USE_OPENAI_FOR_AGENT
+          ? buildAgentSettings(env.DEEPGRAM_API_KEY, callerCtx)
+          : buildAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || '', callerCtx));
 
     agentWs.send(JSON.stringify(settings));
     log.info({ callId: session.callId }, 'Agent settings sent');
@@ -272,6 +285,10 @@ function handleAgentEvent(session: CallSession, event: any): void {
           handleTransferRequest(session, input, functionCallId, clientSide).catch((err) =>
             log.error({ callId: session.callId, err }, 'Transfer request failed')
           );
+        } else if (functionName === 'send_sms') {
+          handleSendSmsCommand(session, input, functionCallId, clientSide).catch((err) =>
+            log.error({ callId: session.callId, err }, 'Send SMS command failed')
+          );
         } else {
           log.warn({ callId: session.callId, functionName }, 'Unknown function call — ignoring');
         }
@@ -359,6 +376,58 @@ async function handleEndCallSummary(
   }
 }
 
+// ── Voice command: send_sms ───────────────────────────
+
+async function handleSendSmsCommand(
+  session: CallSession,
+  input: Record<string, unknown>,
+  functionCallId: string,
+  clientSide: boolean
+): Promise<void> {
+  const log = getLogger();
+  const contactId = (input.contact_name_or_phone as string)?.trim() || '';
+  const message = (input.message as string)?.trim() || '';
+
+  if (!contactId || !message) {
+    sendFunctionResponse(session, functionCallId, clientSide, "I need a contact and a message. Say something like: text John I'll be late.");
+    return;
+  }
+
+  const contact = await getContactByNameOrPhone(contactId);
+  if (!contact) {
+    sendFunctionResponse(
+      session,
+      functionCallId,
+      clientSide,
+      `I couldn't find a contact named ${contactId}. Try their full name or phone number.`
+    );
+    return;
+  }
+
+  try {
+    await sendSMSToRecipient(message, contact.phoneNumber, session.callId);
+    log.info({ callId: session.callId, to: contact.name }, 'Voice command: SMS sent');
+    sendFunctionResponse(session, functionCallId, clientSide, `Done. Text sent to ${contact.name}.`);
+  } catch (err) {
+    log.error({ callId: session.callId, err }, 'Voice command: SMS failed');
+    sendFunctionResponse(session, functionCallId, clientSide, "Sorry, the text didn't go through. Try again or send it yourself.");
+  }
+}
+
+function sendFunctionResponse(
+  session: CallSession,
+  functionCallId: string,
+  clientSide: boolean,
+  output: string
+): void {
+  if (session.agentWs?.readyState !== WebSocket.OPEN) return;
+  if (clientSide) {
+    session.agentWs.send(JSON.stringify({ type: 'InjectAgentMessage', message: output }));
+  } else {
+    session.agentWs.send(JSON.stringify({ type: 'FunctionCallResponse', function_call_id: functionCallId, output }));
+  }
+}
+
 // ── Warm Transfer ────────────────────────────────────
 
 async function handleTransferRequest(
@@ -413,6 +482,19 @@ async function endCall(session: CallSession, status: string): Promise<void> {
   const durationSeconds = Math.round((Date.now() - session.startTime) / 1000);
 
   try {
+    if (session.isCommandMode) {
+      // Command mode: only update call log basics; no summary SMS to owner
+      await updateCallLog(session.callId, {
+        status,
+        endedAt: new Date(),
+        durationSeconds,
+        reasonForCall: 'Voice commands',
+        callerName: 'Owner',
+      });
+      log.info({ callId: session.callId, durationSeconds }, 'Command call ended');
+      return;
+    }
+
     // Use function-extracted summary, or build a fallback from transcript
     const summary = session.summary || buildFallbackSummary(session);
 

@@ -37,11 +37,11 @@ function getTtsModel(language: string): string {
 function getGreetingTextForLanguage(language: string, name?: string): string {
   if (language === 'fr') {
     return name
-      ? `Bonjour ${name}! Je suis l'assistant d'Hussein — comment puis-je vous aider aujourd'hui?`
-      : "Bonjour, je suis l'assistant d'Hussein — comment puis-je vous aider aujourd'hui?";
+      ? `Bonjour ${name}! Je suis Sky, l'assistante d'Hussein — comment puis-je vous aider aujourd'hui?`
+      : "Bonjour, je suis Sky, l'assistante d'Hussein — comment puis-je vous aider aujourd'hui?";
   }
   return name
-    ? `Hi ${name}! This is Hussein's assistant — how can I help you today?`
+    ? `Hi ${name}! I'm Sky, Hussein's assistant — how can I help you today?`
     : getGreetingText();
 }
 
@@ -101,20 +101,20 @@ export function buildCallerContextBlock(
 export function getGreetingText(): string {
   const env = getEnv();
   if (!env.OOO_ENABLED) {
-    return "Hi, this is Hussein's assistant — how can I help you today?";
+    return "Hi, I'm Sky, Hussein's assistant — how can I help you today?";
   }
   const until = env.OOO_UNTIL?.trim();
   const message = env.OOO_MESSAGE?.trim();
   if (until && message) {
-    return `Hi, this is Hussein's assistant. Hussein is ${message} until ${until}, but I'm still taking messages. How can I help you today?`;
+    return `Hi, I'm Sky, Hussein's assistant. Hussein is ${message} until ${until}, but I'm still taking messages. How can I help you today?`;
   }
   if (until) {
-    return `Hi, this is Hussein's assistant. Hussein is away until ${until}, but I'm still taking messages. How can I help you today?`;
+    return `Hi, I'm Sky, Hussein's assistant. Hussein is away until ${until}, but I'm still taking messages. How can I help you today?`;
   }
   if (message) {
-    return `Hi, this is Hussein's assistant. Hussein is ${message}, but I'm still taking messages. How can I help you today?`;
+    return `Hi, I'm Sky, Hussein's assistant. Hussein is ${message}, but I'm still taking messages. How can I help you today?`;
   }
-  return "Hi, this is Hussein's assistant. Hussein is away at the moment, but I'm still taking messages. How can I help you today?";
+  return "Hi, I'm Sky, Hussein's assistant. Hussein is away at the moment, but I'm still taking messages. How can I help you today?";
 }
 
 /** Full agent prompt including optional OOO instructions. */
@@ -143,7 +143,7 @@ Hussein is currently away${env.OOO_MESSAGE?.trim() ? ` (${env.OOO_MESSAGE})` : '
 
 // ── The Agent Prompt ─────────────────────────────────
 
-export const AGENT_INSTRUCTIONS = `You are Hussein Bayoun's phone assistant. You answer missed calls and take messages. Sound like a real, warm human assistant — not a phone tree. Keep calls brief and natural.
+export const AGENT_INSTRUCTIONS = `You are Sky, Hussein Bayoun's phone assistant. You answer missed calls and take messages. Sound like a real, warm human assistant — not a phone tree. Keep calls brief and natural.
 
 ESCALATION — HIGHEST PRIORITY — CHECK EVERY TURN FIRST
 Only trigger this for genuine urgency signals — NOT for routine requests like "can I speak to him?" or "is he available?" (those go through the normal message-taking flow).
@@ -176,7 +176,7 @@ TURN-TAKING — CRITICAL
 - "It seems like we may have gotten disconnected" only after many seconds of total silence. Never combine it with "didn't catch that".
 
 OPENING
-The greeting is played before you connect: "Hi, this is Hussein's assistant — how can I help you today?"
+The greeting is played before you connect: "Hi, I'm Sky, Hussein's assistant — how can I help you today?"
 Wait for the caller to speak first. Then:
 - Simple greeting ("Hi", "Hello", "Hey") → "Hi! What can I do for you?" or "Hi there! What's the message for Hussein?"
 - Blank/noise → stay silent. Never say "I'm listening."
@@ -249,8 +249,8 @@ WHAT YOU MUST NEVER DO
 - Never agree to schedule meetings or authorize anything. Say: "I'll make sure Hussein gets that and he'll follow up directly."
 - Never invent information. If you don't know, say so honestly.
 
-HANDLING "ARE YOU A ROBOT?" / "ARE YOU AI?"
-"I'm Hussein's virtual assistant — I make sure his messages get to him. How can I help?"
+HANDLING "ARE YOU A ROBOT?" / "ARE YOU AI?" / "WHO ARE YOU?"
+"I'm Sky, Hussein's assistant — I make sure his messages get to him. How can I help?"
 Redirect immediately. Don't elaborate on your nature.
 
 HANDLING ANGRY OR FRUSTRATED CALLERS
@@ -361,6 +361,42 @@ export const AGENT_FUNCTIONS = [
   },
 ];
 
+// ── Voice command mode (owner calls to give commands) ───
+
+const COMMAND_AGENT_PROMPT = `You are Hussein's voice command assistant. He is calling from his own phone to give you quick commands. Keep responses very short — one sentence.
+
+You can:
+- Send a text: "Text [name or phone] [message]". Call the send_sms function with contact_name_or_phone (first name or full name from his contacts, or a phone number) and message. If he says "text John I'll be late" call send_sms with contact_name_or_phone "John" and message "I'll be late".
+- You may add more commands later (reminders, calendar).
+
+Rules:
+- Confirm briefly after each action: "Done. Text sent to John." or "I couldn't find a contact named X. Try saying their full name or number."
+- One command at a time. If he gives multiple, do the first and confirm, then ask if he wants to do the next.
+- No small talk beyond what's needed. He's on the go.
+- If he says "that's all" or "nothing else" or "goodbye", say goodbye and the call can end.`;
+
+export const COMMAND_FUNCTIONS = [
+  {
+    name: 'send_sms',
+    description:
+      'Send an SMS to a contact. Use contact_name_or_phone: first name, full name (from Hussein\'s contacts), or E.164 phone number. Use message: the exact text to send.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        contact_name_or_phone: {
+          type: 'string',
+          description: 'First name, full name, or phone number (e.g. John, Sarah Smith, +15551234567)',
+        },
+        message: {
+          type: 'string',
+          description: 'The SMS message body to send',
+        },
+      },
+      required: ['contact_name_or_phone', 'message'],
+    },
+  },
+];
+
 // ── Deepgram Agent Settings Configuration ────────────
 // Sent as the first message over the agent WebSocket.
 
@@ -439,6 +475,57 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
           headers: {
             'x-api-key': anthropicApiKey,
           },
+        },
+      },
+    },
+  };
+}
+
+// ── Command mode (owner voice commands) ───────────────
+
+const COMMAND_GREETING = 'Voice commands. What would you like me to do?';
+
+export function buildCommandAgentSettings(_deepgramApiKey: string) {
+  return {
+    ...baseSettings,
+    agent: {
+      ...baseSettings.agent,
+      language: 'en' as const,
+      context: {
+        messages: [
+          { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
+        ],
+      },
+      think: {
+        provider: { type: 'open_ai' as const, model: 'gpt-4o-mini' },
+        prompt: COMMAND_AGENT_PROMPT,
+        functions: COMMAND_FUNCTIONS,
+      },
+    },
+  };
+}
+
+export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string) {
+  return {
+    ...baseSettings,
+    agent: {
+      ...baseSettings.agent,
+      language: 'en' as const,
+      context: {
+        messages: [
+          { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
+        ],
+      },
+      think: {
+        provider: {
+          type: 'anthropic' as const,
+          model: 'claude-sonnet-4-20250514',
+        },
+        prompt: COMMAND_AGENT_PROMPT,
+        functions: COMMAND_FUNCTIONS,
+        endpoint: {
+          url: 'https://api.anthropic.com',
+          headers: { 'x-api-key': anthropicApiKey },
         },
       },
     },
