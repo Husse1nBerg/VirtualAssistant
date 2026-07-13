@@ -33,6 +33,7 @@ interface SmsSession {
   callLogId: string;
   fromNumber: string;
   turns: { role: 'user' | 'assistant'; content: string }[];
+  startedAt: number;
   lastActivityAt: number;
   complete: boolean;
 }
@@ -162,6 +163,7 @@ export async function handleIncomingSms(
       callLogId,
       fromNumber,
       turns: [],
+      startedAt: Date.now(),
       lastActivityAt: Date.now(),
       complete: false,
     };
@@ -246,7 +248,7 @@ export async function handleIncomingSms(
     updateCallLog(session.callLogId, {
       status: 'completed',
       endedAt: new Date(),
-      durationSeconds: Math.round((Date.now() - (session.lastActivityAt)) / 1000),
+      durationSeconds: Math.round((Date.now() - session.startedAt) / 1000),
       callerName: callSummary.caller_name,
       reasonForCall: callSummary.reason_for_call,
       urgency: callSummary.urgency,

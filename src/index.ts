@@ -1,10 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { loadEnv, getEnv } from './config';
 import { initLogger, getLogger } from './utils/logger';
 import { requestIdMiddleware } from './utils/requestId';
+import { redactUrl } from './utils/auth';
 import voiceRoutes from './routes/voice';
 import smsRoutes from './routes/sms';
 import healthRoutes from './routes/health';
@@ -37,16 +40,30 @@ async function main() {
 
   const app = express();
 
+  // Behind a hosting proxy / ngrok — needed for correct client IPs in rate limiting.
+  app.set('trust proxy', 1);
+
+  // Security headers. CSP is disabled because the dashboard renders inline <script>;
+  // the other helmet defaults (nosniff, frameguard, etc.) still apply.
+  app.use(helmet({ contentSecurityPolicy: false }));
+
   // Parse URL-encoded bodies (Twilio webhooks)
   app.use(express.urlencoded({ extended: false }));
   app.use(express.json());
+
+  // Rate limiting: cap paid-API abuse (Deepgram/Claude) and dashboard token guessing.
+  const webhookLimiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false });
+  const dashboardLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
+  app.use('/voice', webhookLimiter);
+  app.use('/sms', webhookLimiter);
+  app.use('/dashboard', dashboardLimiter);
 
   // Request ID middleware
   app.use(requestIdMiddleware);
 
   // Request logging
   app.use((req, _res, next) => {
-    log.info({ method: req.method, url: req.url, requestId: req.requestId }, 'Request');
+    log.info({ method: req.method, url: redactUrl(req.url), requestId: req.requestId }, 'Request');
     next();
   });
 

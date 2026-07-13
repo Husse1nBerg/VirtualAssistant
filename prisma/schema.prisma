@@ -29,6 +29,10 @@ model CallLog {
   sentiment        String?  // positive | neutral | frustrated | angry | distressed
   summary          String?
 
+  // Set once the owner's post-call summary SMS has been sent — guards against the
+  // endCall path and the /voice/status 90s fallback both texting the owner.
+  summarySentAt    DateTime?
+
   // Metrics
   sttLatencyMs     Int?
   llmLatencyMs     Int?

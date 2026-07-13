@@ -17,6 +17,11 @@
 import { getEnv } from '../config';
 import type { Contact } from './database';
 
+// LLM model names for the Deepgram Agent `think` provider. Centralized so a model
+// bump is one edit, not four. V1 allows claude-3-5-haiku-latest | claude-sonnet-4-20250514.
+const OPENAI_THINK_MODEL = 'gpt-4o-mini';
+const ANTHROPIC_THINK_MODEL = 'claude-sonnet-4-20250514';
+
 // ── Language Support ──────────────────────────────────
 
 /** Human-readable names for supported language codes. */
@@ -433,7 +438,7 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
         ],
       },
       think: {
-        provider: { type: 'open_ai' as const, model: 'gpt-4o-mini' },
+        provider: { type: 'open_ai' as const, model: OPENAI_THINK_MODEL },
         prompt,
         functions: AGENT_FUNCTIONS,
       },
@@ -466,7 +471,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
       think: {
         provider: {
           type: 'anthropic' as const,
-          model: 'claude-sonnet-4-20250514',
+          model: ANTHROPIC_THINK_MODEL,
         },
         prompt,
         functions: AGENT_FUNCTIONS,
@@ -497,7 +502,7 @@ export function buildCommandAgentSettings(_deepgramApiKey: string) {
         ],
       },
       think: {
-        provider: { type: 'open_ai' as const, model: 'gpt-4o-mini' },
+        provider: { type: 'open_ai' as const, model: OPENAI_THINK_MODEL },
         prompt: COMMAND_AGENT_PROMPT,
         functions: COMMAND_FUNCTIONS,
       },
@@ -519,7 +524,7 @@ export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, ant
       think: {
         provider: {
           type: 'anthropic' as const,
-          model: 'claude-sonnet-4-20250514',
+          model: ANTHROPIC_THINK_MODEL,
         },
         prompt: COMMAND_AGENT_PROMPT,
         functions: COMMAND_FUNCTIONS,

@@ -41,6 +41,19 @@ export async function getCallLogBySid(twilioCallSid: string) {
   return getPrisma().callLog.findUnique({ where: { twilioCallSid } });
 }
 
+/**
+ * Atomically claim the right to send the post-call summary SMS.
+ * Returns true only for the first caller (sets summarySentAt only when still null),
+ * so the endCall path and the /voice/status fallback can't both text the owner.
+ */
+export async function markSummarySent(id: string): Promise<boolean> {
+  const result = await getPrisma().callLog.updateMany({
+    where: { id, summarySentAt: null },
+    data: { summarySentAt: new Date() },
+  });
+  return result.count === 1;
+}
+
 export async function getCallLogById(id: string) {
   return getPrisma().callLog.findUnique({
     where: { id },
