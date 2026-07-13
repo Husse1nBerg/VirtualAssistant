@@ -32,6 +32,8 @@ services:
         sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
+      - key: DASHBOARD_TOKEN
+        sync: false
       - key: TTS_PROVIDER
         value: deepgram
       - key: DATABASE_URL
