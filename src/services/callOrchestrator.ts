@@ -12,6 +12,7 @@ import {
   createCallLog,
   getCallLogBySid,
   updateCallLog,
+  markSummarySent,
   addTranscript,
   getContactByPhone,
   getContactByNameOrPhone,
@@ -19,6 +20,7 @@ import {
 } from './database';
 import { sendPostCallNotifications, sendEscalationSMS, sendSMSToRecipient } from './notification';
 import { getTwilioClient } from './twilioClient';
+import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 
 // ── Types ────────────────────────────────────────────
@@ -106,7 +108,18 @@ async function initializeSession(
 
   const fromNumber = startData.customParameters?.from || 'unknown';
   const toNumber = startData.customParameters?.to || 'unknown';
-  const isCommandMode = startData.customParameters?.mode === 'command';
+  const mode = startData.customParameters?.mode === 'command' ? 'command' : 'default';
+
+  // Reject direct/forged Media Stream connections: the token is minted only by our
+  // /voice/inbound TwiML and binds this callSid + mode. Without this, anyone could
+  // connect to /media-stream and self-assign command mode (send_sms as the owner).
+  if (!verifyStreamToken(startData.customParameters?.token, startData.callSid, mode)) {
+    log.warn({ callSid: startData.callSid }, 'Media stream: invalid/missing stream token — rejecting');
+    twilioWs.close(1008, 'Unauthorized');
+    throw new Error('Unauthorized media stream connection');
+  }
+
+  const isCommandMode = mode === 'command';
 
   // Reuse the call log created in /inbound; fall back to creating one if missing.
   const callLog =
@@ -515,12 +528,18 @@ async function endCall(session: CallSession, status: string): Promise<void> {
     });
 
     // Send summary + line-by-line transcript (Caller/Agent) immediately.
-    await sendPostCallNotifications(
-      summary,
-      session.callId,
-      session.fromNumber,
-      session.transcriptParts
-    );
+    // markSummarySent atomically claims the send so the /voice/status 90s fallback
+    // can't also text the owner (avoids duplicate summary SMS).
+    if (await markSummarySent(session.callId)) {
+      await sendPostCallNotifications(
+        summary,
+        session.callId,
+        session.fromNumber,
+        session.transcriptParts
+      );
+    } else {
+      log.info({ callId: session.callId }, 'Summary already sent — skipping duplicate');
+    }
     // Recording (link or MMS) is sent separately when Twilio calls /voice/recording-status.
     log.info(
       { callId: session.callId, durationSeconds, urgency: summary.urgency },

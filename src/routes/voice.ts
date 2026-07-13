@@ -3,15 +3,19 @@ import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
-import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone } from '../services/database';
+import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendEscalationSMS } from '../services/notification';
 import { getGreetingText } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
+import { mintStreamToken } from '../utils/streamToken';
+import { isValidDashboardToken } from '../utils/auth';
 
 const router = Router();
 
 // Cache greeting audio keyed by greeting text (supports generic + personalized greetings).
+// Capped so a flood of unique ?caller= values can't grow it unbounded (memory DoS).
 const greetingCache = new Map<string, Buffer>();
+const GREETING_CACHE_MAX = 200;
 
 function normalizePhoneForCompare(raw: string): string {
   return raw.replace(/\D/g, '');
@@ -66,6 +70,10 @@ router.get('/greeting', async (req: Request, res: Response) => {
     }
 
     const buffer = Buffer.from(await dgRes.arrayBuffer());
+    if (greetingCache.size >= GREETING_CACHE_MAX) {
+      const oldest = greetingCache.keys().next().value;
+      if (oldest !== undefined) greetingCache.delete(oldest);
+    }
     greetingCache.set(greetingText, buffer);
     log.info({ ooo: getEnv().OOO_ENABLED, callerName }, 'Greeting audio generated and cached');
     res.setHeader('Content-Type', 'audio/mpeg');
@@ -85,6 +93,13 @@ router.get('/recording/:callLogId', async (req: Request, res: Response) => {
   const log = getLogger();
   const callLogId = req.params.callLogId as string;
   const env = getEnv();
+
+  // Gate raw call audio behind the dashboard token (Twilio MMS and dashboard links carry it).
+  // If no token is configured there is no secret to check against, so fall through (unchanged).
+  if (env.DASHBOARD_TOKEN && !isValidDashboardToken(req.query.token)) {
+    log.warn({ callLogId }, 'Recording proxy: missing/invalid token');
+    return res.status(404).send('Recording not found');
+  }
 
   const callLog = await getCallLogById(callLogId);
   if (!callLog?.recordingUrl) {
@@ -170,14 +185,15 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
     // Twilio fetches /voice/greeting, which calls Deepgram and returns the MP3.
     twiml.play(`${env.BASE_URL}/voice/greeting${greetingParams}`);
 
+    const mode = isOwnerCall ? 'command' : 'default';
     const connect = twiml.connect();
     const stream = connect.stream({ url: wsUrl });
     stream.parameter({ name: 'from', value: from });
     stream.parameter({ name: 'to', value: to });
     stream.parameter({ name: 'callSid', value: callSid });
-    if (isOwnerCall) {
-      stream.parameter({ name: 'mode', value: 'command' });
-    }
+    stream.parameter({ name: 'mode', value: mode });
+    // Signed token binds callSid+mode so the WS side can reject direct/forged connections.
+    stream.parameter({ name: 'token', value: mintStreamToken(callSid, mode) });
 
     return res.send(twiml.toString());
   } catch (err) {
@@ -256,7 +272,8 @@ router.post('/status', twilioWebhookAuth, async (req: Request, res: Response) =>
         setTimeout(async () => {
           try {
             const log = await getCallLogBySid(callSid);
-            if (log && !log.recordingUrl) {
+            // Only send if endCall hasn't already claimed the summary (avoids duplicate SMS).
+            if (log && !log.recordingUrl && (await markSummarySent(log.id))) {
               getLogger().info({ callSid }, 'No recording received; sending summary only');
               const withTranscripts = await getCallLogById(log.id);
               if (withTranscripts) {

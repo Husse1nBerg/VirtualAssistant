@@ -70,14 +70,4 @@ CREATE UNIQUE INDEX "CallLog_twilioCallSid_key" ON "CallLog"("twilioCallSid");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Contact_phoneNumber_key" ON "Contact"("phoneNumber");
-┌─────────────────────────────────────────────────────────┐
-│  Update available 6.19.2 -> 7.4.2                       │
-│                                                         │
-│  This is a major update - please follow the guide at    │
-│  https://pris.ly/d/major-version-upgrade                │
-│                                                         │
-│  Run the following to update                            │
-│    npm i --save-dev prisma@latest                       │
-│    npm i @prisma/client@latest                          │
-└─────────────────────────────────────────────────────────┘
 

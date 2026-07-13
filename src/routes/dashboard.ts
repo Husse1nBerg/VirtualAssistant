@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
+import { isValidDashboardToken } from '../utils/auth';
 import { getRecentCalls, getAllContacts, upsertContact, deleteContact, searchCalls, getCallAnalytics, type CallAnalytics } from '../services/database';
 import type { CallLog, Transcript } from '@prisma/client';
 import type { Contact } from '../services/database';
@@ -117,7 +118,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
     const summaryText = escapeHtml(call.summary || call.reasonForCall || '—');
 
     const recordingBtn = call.recordingUrl
-      ? `<a href="/voice/recording/${call.id}" target="_blank" class="btn">▶ Recording</a>`
+      ? `<a href="/voice/recording/${call.id}?token=${encodeURIComponent(token)}" target="_blank" class="btn">▶ Recording</a>`
       : '';
     const callbackBtn = `<a href="tel:${escapeHtml(call.fromNumber)}" class="btn">📞 Call back</a>`;
     const lowConfidenceBadge = (call.confidenceScore !== null && call.confidenceScore < 0.5)
@@ -372,7 +373,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
 
 router.get('/:token', async (req: Request, res: Response) => {
   const env = getEnv();
-  if (!env.DASHBOARD_TOKEN || req.params.token !== env.DASHBOARD_TOKEN) {
+  if (!isValidDashboardToken(req.params.token)) {
     return res.status(404).send('Not found');
   }
   try {
@@ -390,8 +391,7 @@ router.get('/:token', async (req: Request, res: Response) => {
 });
 
 router.post('/:token/contacts', async (req: Request, res: Response) => {
-  const env = getEnv();
-  if (!env.DASHBOARD_TOKEN || req.params.token !== env.DASHBOARD_TOKEN) {
+  if (!isValidDashboardToken(req.params.token)) {
     return res.status(404).send('Not found');
   }
   const { phoneNumber, name, isVip, notes, language } = req.body as Record<string, unknown>;
@@ -414,8 +414,7 @@ router.post('/:token/contacts', async (req: Request, res: Response) => {
 });
 
 router.delete('/:token/contacts/:id', async (req: Request, res: Response) => {
-  const env = getEnv();
-  if (!env.DASHBOARD_TOKEN || req.params.token !== env.DASHBOARD_TOKEN) {
+  if (!isValidDashboardToken(req.params.token)) {
     return res.status(404).send('Not found');
   }
   try {

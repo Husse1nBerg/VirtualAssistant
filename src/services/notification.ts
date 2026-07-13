@@ -196,7 +196,7 @@ export async function sendRecordingOnlyNotification(
   const log = getLogger();
   const env = getEnv();
   const to = env.OWNER_PHONE_NUMBER;
-  const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLogId}`;
+  const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLogId}${env.DASHBOARD_TOKEN ? `?token=${encodeURIComponent(env.DASHBOARD_TOKEN)}` : ''}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
 
   const callerDisplay = callerInfo
@@ -248,7 +248,7 @@ export async function sendCombinedCallNotification(
   const log = getLogger();
   const env = getEnv();
   const summaryText = formatSummaryFromCallLog(callLog);
-  const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLog.id}`;
+  const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLog.id}${env.DASHBOARD_TOKEN ? `?token=${encodeURIComponent(env.DASHBOARD_TOKEN)}` : ''}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
   try {
     const msg = await getTwilioClient().messages.create({
