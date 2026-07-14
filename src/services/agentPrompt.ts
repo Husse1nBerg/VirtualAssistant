@@ -414,6 +414,11 @@ export const COMMAND_FUNCTIONS = [
 // Sent as the first message over the agent WebSocket.
 
 // V1 API: type "Settings", provider-based structure, "prompt" not "instructions".
+// Proper nouns most likely to be mis-transcribed, especially on accented speech.
+// Deepgram nova-3 keyterm prompting boosts recognition of these. Add brand/product
+// names, common contact names, etc. as needed — this is the main accent-accuracy lever.
+const STT_KEYTERMS = ['Hussein', 'Bayoun', 'Sky'];
+
 const baseSettings = {
   type: 'Settings' as const,
   audio: {
@@ -424,7 +429,7 @@ const baseSettings = {
     language: 'en' as const,
     // No greeting or context here — both are injected at call time by the builder functions
     // so they always reflect the current OOO state.
-    listen: { provider: { type: 'deepgram' as const, model: 'nova-3' } },
+    listen: { provider: { type: 'deepgram' as const, model: 'nova-3', keyterms: STT_KEYTERMS } },
     speak: { provider: { type: 'deepgram' as const, model: 'aura-2-thalia-en' } },
   },
 };
