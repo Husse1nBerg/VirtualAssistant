@@ -434,6 +434,16 @@ const baseSettings = {
   },
 };
 
+// Per-call listen config: boost the known caller's name on top of the static keyterms,
+// so a saved contact's name is recognized even through a heavy accent.
+function buildListen(ctx?: CallerContext) {
+  const name = ctx?.contact?.name?.trim();
+  const keyterms = name && name.length > 1
+    ? Array.from(new Set([...STT_KEYTERMS, ...name.split(/\s+/)]))
+    : STT_KEYTERMS;
+  return { provider: { type: 'deepgram' as const, model: 'nova-3', keyterms } };
+}
+
 export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
   const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
   const lang = ctx?.contact?.language ?? 'en';
@@ -444,6 +454,7 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
     agent: {
       ...baseSettings.agent,
       language: lang,
+      listen: buildListen(ctx),
       speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
       context: {
         messages: [
@@ -475,6 +486,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
     agent: {
       ...baseSettings.agent,
       language: lang,
+      listen: buildListen(ctx),
       speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
       context: {
         messages: [
