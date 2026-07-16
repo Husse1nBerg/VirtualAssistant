@@ -54,6 +54,11 @@ export async function markSummarySent(id: string): Promise<boolean> {
   return result.count === 1;
 }
 
+/** Release a summary-send claim after a failed send so a fallback path can retry. */
+export async function clearSummarySent(id: string): Promise<void> {
+  await getPrisma().callLog.update({ where: { id }, data: { summarySentAt: null } });
+}
+
 export async function getCallLogById(id: string) {
   return getPrisma().callLog.findUnique({
     where: { id },

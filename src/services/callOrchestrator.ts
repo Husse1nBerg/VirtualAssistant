@@ -13,6 +13,7 @@ import {
   getCallLogBySid,
   updateCallLog,
   markSummarySent,
+  clearSummarySent,
   addTranscript,
   getContactByPhone,
   getContactByNameOrPhone,
@@ -362,9 +363,14 @@ async function handleEndCallSummary(
     reason_for_call: input.reason_for_call || 'Unknown',
     urgency: input.urgency || 'medium',
     callback_window: input.callback_window || null,
-    promised_actions: input.promised_actions || [],
+    // Coerce LLM output: promised_actions sometimes arrives as a string, not an array
+    promised_actions: Array.isArray(input.promised_actions)
+      ? input.promised_actions.map(String)
+      : input.promised_actions
+        ? [String(input.promised_actions)]
+        : [],
     sentiment: input.sentiment || undefined,
-    confidence_score: input.confidence_score ?? 0.5,
+    confidence_score: Number(input.confidence_score) || 0.5,
     summary: input.full_summary || 'No summary available.',
   };
 
@@ -511,7 +517,8 @@ async function endCall(session: CallSession, status: string): Promise<void> {
     // Use function-extracted summary, or build a fallback from transcript
     const summary = session.summary || buildFallbackSummary(session);
 
-    // Update call log with all structured data
+    // Update call log with all structured data.
+    // Non-fatal: a DB failure here must never block the summary/transcript SMS below.
     await updateCallLog(session.callId, {
       status,
       endedAt: new Date(),
@@ -525,18 +532,24 @@ async function endCall(session: CallSession, status: string): Promise<void> {
       sentiment: summary.sentiment ?? null,
       confidenceScore: summary.confidence_score,
       summary: summary.summary,
-    });
+    }).catch((err) => log.error({ callId: session.callId, err }, 'Failed to update call log at wrap-up'));
 
     // Send summary + line-by-line transcript (Caller/Agent) immediately.
     // markSummarySent atomically claims the send so the /voice/status 90s fallback
     // can't also text the owner (avoids duplicate summary SMS).
     if (await markSummarySent(session.callId)) {
-      await sendPostCallNotifications(
-        summary,
-        session.callId,
-        session.fromNumber,
-        session.transcriptParts
-      );
+      try {
+        await sendPostCallNotifications(
+          summary,
+          session.callId,
+          session.fromNumber,
+          session.transcriptParts
+        );
+      } catch (err) {
+        // Release the claim so the recording-status fallback can send summary + transcript.
+        log.error({ callId: session.callId, err }, 'Summary send failed — releasing claim for fallback');
+        await clearSummarySent(session.callId).catch(() => {});
+      }
     } else {
       log.info({ callId: session.callId }, 'Summary already sent — skipping duplicate');
     }
