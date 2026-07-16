@@ -365,20 +365,43 @@ export async function sendSMSToRecipient(body: string, toPhone: string, callLogI
   await sendSMS(body, callLogId, toPhone);
 }
 
-const SMS_MAX_CHARS = 1590;
+const SMS_MAX_CHARS = 1580;
+// ponytail: hard cap of 4 chunks (~6300 chars) — beyond that the tail is cut; dashboard has the full transcript
+const MAX_CHUNKS = 4;
+
+/**
+ * Split a long body into (n/m)-prefixed chunks on line boundaries so the
+ * transcript arrives in follow-up messages instead of being silently cut off
+ * (the old truncation dropped the Transcript block entirely on long calls).
+ */
+function chunkBody(body: string): string[] {
+  if (body.length <= SMS_MAX_CHARS) return [body];
+  const raw: string[] = [];
+  let rest = body;
+  while (rest.length > 0 && raw.length < MAX_CHUNKS) {
+    if (rest.length <= SMS_MAX_CHARS) {
+      raw.push(rest);
+      rest = '';
+      break;
+    }
+    let cut = rest.lastIndexOf('\n', SMS_MAX_CHARS);
+    if (cut < SMS_MAX_CHARS / 2) cut = SMS_MAX_CHARS;
+    raw.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, '');
+  }
+  if (rest.length > 0) raw[raw.length - 1] += '\n…[truncated — full transcript on dashboard]';
+  return raw.map((c, i) => `(${i + 1}/${raw.length}) ${c}`);
+}
 
 async function sendSMS(body: string, callLogId: string, to: string): Promise<void> {
   const log = getLogger();
   const env = getEnv();
   const statusCallback = `${env.BASE_URL}/sms/status`;
 
-  const truncated = body.length > SMS_MAX_CHARS
-    ? body.slice(0, SMS_MAX_CHARS - 4) + '...'
-    : body;
-
+  for (const chunk of chunkBody(body)) {
   try {
     const msg = await getTwilioClient().messages.create({
-      body: truncated,
+      body: chunk,
       from: env.TWILIO_PHONE_NUMBER,
       to,
       statusCallback,
@@ -412,6 +435,8 @@ async function sendSMS(body: string, callLogId: string, to: string): Promise<voi
       status: 'failed',
       error: err instanceof Error ? err.message : String(err),
     });
+    break; // first failed chunk → later chunks will fail too; stop spamming
+  }
   }
 }
 
@@ -425,13 +450,10 @@ async function sendWhatsApp(body: string, callLogId: string, to: string): Promis
   const whatsappFrom = `whatsapp:${fromNumber}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
 
-  const truncated = body.length > SMS_MAX_CHARS
-    ? body.slice(0, SMS_MAX_CHARS - 4) + '...'
-    : body;
-
+  for (const chunk of chunkBody(body)) {
   try {
     const msg = await getTwilioClient().messages.create({
-      body: truncated,
+      body: chunk,
       from: whatsappFrom,
       to: whatsappTo,
       statusCallback,
@@ -465,5 +487,7 @@ async function sendWhatsApp(body: string, callLogId: string, to: string): Promis
     });
 
     if (code !== 63007) throw err;
+    return; // WhatsApp not configured — don't retry remaining chunks
+  }
   }
 }
