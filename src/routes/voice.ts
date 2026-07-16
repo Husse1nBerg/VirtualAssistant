@@ -4,7 +4,7 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
-import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendEscalationSMS } from '../services/notification';
+import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendCombinedCallNotification, sendEscalationSMS } from '../services/notification';
 import { getGreetingText } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
 import { mintStreamToken } from '../utils/streamToken';
@@ -230,12 +230,31 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
     const callLog = await getCallLogBySid(callSid);
     if (callLog) {
       await updateCallLog(callLog.id, { recordingSid, recordingUrl });
-      sendRecordingOnlyNotification(callLog.id, recordingUrl, {
-        fromNumber: callLog.fromNumber,
-        callerName: callLog.callerName,
-      }).catch((err) =>
-        log.error({ callSid, err }, 'Failed to send recording notification')
-      );
+      // Safety net: if endCall failed before sending the summary (claim still open),
+      // send summary + transcript together with the recording instead of recording-only.
+      if (await markSummarySent(callLog.id)) {
+        log.warn({ callSid }, 'Summary was never sent at call end — sending combined summary + recording');
+        const withTranscripts = await getCallLogById(callLog.id);
+        await sendCombinedCallNotification(
+          {
+            ...(withTranscripts ?? callLog),
+            transcripts: withTranscripts?.transcripts?.map((t) => ({
+              role: t.role,
+              content: t.content,
+            })),
+          },
+          recordingUrl
+        ).catch((err) =>
+          log.error({ callSid, err }, 'Failed to send combined summary + recording notification')
+        );
+      } else {
+        sendRecordingOnlyNotification(callLog.id, recordingUrl, {
+          fromNumber: callLog.fromNumber,
+          callerName: callLog.callerName,
+        }).catch((err) =>
+          log.error({ callSid, err }, 'Failed to send recording notification')
+        );
+      }
     } else {
       log.warn({ callSid }, 'Recording received but no call log found for this CallSid');
     }
