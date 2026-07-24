@@ -23,10 +23,13 @@ export function hasCallerSpeech(parts: TranscriptPart[]): boolean {
 
 /**
  * Final urgency for the post-call notification. Precedence (first match wins):
- *   1. VIP caller (inner circle) → high — Hussein wants to know they called.
+ *   1. alwaysUrgent contact (e.g. parents, sisters) → high, regardless of content.
  *   2. Urgent keyword in caller speech/summary, or the LLM already flagged high → high.
  *   3. No caller speech (hang-up / wrong number) → low.
  *   4. A real conversation was recorded → medium.
+ *
+ * Note: isVip only controls greeting tone, NOT urgency — a close contact does not
+ * auto-flag high unless the transcript itself is urgent.
  *
  * @param base        Urgency proposed by the LLM summary (or fallback).
  * @param contact     Resolved caller contact, or null if unknown.
@@ -39,7 +42,7 @@ export function computeUrgency(
   parts: TranscriptPart[],
   summaryText = ''
 ): Urgency {
-  if (contact?.isVip) return 'high';
+  if (contact?.alwaysUrgent) return 'high';
 
   const haystack = (
     parts.filter((p) => p.role === 'caller').map((p) => p.content).join(' ') +

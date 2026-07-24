@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { computeUrgency, hasCallerSpeech } from '../src/services/urgency';
 import type { Contact } from '../src/services/database';
 
-function contact(isVip: boolean): Contact {
+function contact(alwaysUrgent: boolean, isVip = true): Contact {
   return {
     id: 'c1',
     phoneNumber: '+15145550000',
     name: 'Test',
     isVip,
+    alwaysUrgent,
     notes: null,
     language: 'en',
     createdAt: new Date(),
@@ -27,9 +28,16 @@ describe('computeUrgency', () => {
     expect(computeUrgency('medium', null, caller('Hi, can you tell Hussein I called about the invoice.'), '')).toBe('medium');
   });
 
-  it('scores any VIP caller as high, even on a hang-up', () => {
+  it('scores an alwaysUrgent contact (mom/dad/sisters) as high, even on a hang-up', () => {
     expect(computeUrgency('medium', contact(true), [], 'No speech detected.')).toBe('high');
     expect(computeUrgency('low', contact(true), caller('just checking in'), '')).toBe('high');
+  });
+
+  it('does NOT auto-flag a close (VIP) contact who is not alwaysUrgent', () => {
+    // e.g. brother-in-law / best friend: high only if the transcript is urgent
+    expect(computeUrgency('medium', contact(false, true), [], 'No speech detected.')).toBe('low');
+    expect(computeUrgency('medium', contact(false, true), caller('just calling to say hi'), '')).toBe('medium');
+    expect(computeUrgency('medium', contact(false, true), caller('this is an emergency'), '')).toBe('high');
   });
 
   it('scores urgent keywords as high (English + French)', () => {

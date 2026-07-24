@@ -80,7 +80,8 @@ model Contact {
   id          String   @id @default(uuid())
   phoneNumber String   @unique
   name        String
-  isVip       Boolean  @default(false)
+  isVip       Boolean  @default(false) // warm/informal greeting tone
+  alwaysUrgent Boolean @default(false) // a call from this contact is always scored high urgency
   notes       String?  // e.g. "dad", "best client"
   language    String   @default("en") // BCP-47 language code: "en", "ar", "fr", etc.
   createdAt   DateTime @default(now())
