@@ -155,7 +155,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
   const contactRows = contacts.map((c) => `<tr>
     <td>${escapeHtml(c.name)}</td>
     <td class="phone">${escapeHtml(c.phoneNumber)}</td>
-    <td>${c.isVip ? '<span class="badge badge-high">⭐ VIP</span>' : 'Regular'}</td>
+    <td>${c.isVip ? '<span class="badge badge-high">⭐ VIP</span>' : 'Regular'}${c.alwaysUrgent ? ' <span class="badge badge-high" style="background:#ffebee;color:#c62828">🔴 Always urgent</span>' : ''}</td>
     <td>${LANG_LABELS[c.language ?? 'en'] ?? escapeHtml(c.language ?? 'en')}</td>
     <td>${escapeHtml(c.notes || '')}</td>
     <td class="actions">
@@ -164,6 +164,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
         data-phone="${escapeHtml(c.phoneNumber)}"
         data-name="${escapeHtml(c.name)}"
         data-vip="${c.isVip}"
+        data-urgent="${c.alwaysUrgent}"
         data-language="${escapeHtml(c.language ?? 'en')}"
         data-notes="${escapeHtml(c.notes || '')}">Edit</button>
       <button class="btn btn-danger delete-btn" data-id="${escapeHtml(c.id)}">Delete</button>
@@ -288,6 +289,10 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
             <input type="checkbox" id="c-vip">
             <label for="c-vip">VIP contact (warm, first-name basis)</label>
           </div>
+          <div class="form-group checkbox">
+            <input type="checkbox" id="c-urgent">
+            <label for="c-urgent">Always urgent (auto-flag every call high)</label>
+          </div>
         </div>
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">Save Contact</button>
@@ -309,6 +314,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
         document.getElementById('c-phone').value = d.phone || '';
         document.getElementById('c-name').value = d.name || '';
         document.getElementById('c-vip').checked = d.vip === 'true';
+        document.getElementById('c-urgent').checked = d.urgent === 'true';
         document.getElementById('c-language').value = d.language || 'en';
         document.getElementById('c-notes').value = d.notes || '';
         document.getElementById('form-title').textContent = 'Edit Contact';
@@ -341,6 +347,7 @@ function renderDashboard(calls: CallWithTranscripts[], contacts: Contact[], toke
         name: document.getElementById('c-name').value.trim(),
         phoneNumber: document.getElementById('c-phone').value.trim(),
         isVip: document.getElementById('c-vip').checked,
+        alwaysUrgent: document.getElementById('c-urgent').checked,
         language: document.getElementById('c-language').value || 'en',
         notes: document.getElementById('c-notes').value.trim() || undefined,
       };
@@ -394,7 +401,7 @@ router.post('/:token/contacts', async (req: Request, res: Response) => {
   if (!isValidDashboardToken(req.params.token)) {
     return res.status(404).send('Not found');
   }
-  const { phoneNumber, name, isVip, notes, language } = req.body as Record<string, unknown>;
+  const { phoneNumber, name, isVip, alwaysUrgent, notes, language } = req.body as Record<string, unknown>;
   if (!phoneNumber || !name) {
     return res.status(400).json({ error: 'phoneNumber and name are required' });
   }
@@ -403,6 +410,7 @@ router.post('/:token/contacts', async (req: Request, res: Response) => {
       phoneNumber: String(phoneNumber),
       name: String(name),
       isVip: isVip === true || isVip === 'true',
+      alwaysUrgent: alwaysUrgent === true || alwaysUrgent === 'true',
       notes: notes ? String(notes) : undefined,
       language: language ? String(language) : 'en',
     });

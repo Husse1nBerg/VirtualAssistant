@@ -22,20 +22,23 @@ interface Row {
   name: string;
   phoneNumber: string; // full E.164
   language: 'en' | 'fr';
-  isVip: boolean;
+  isVip: boolean;        // warm/informal greeting tone
+  alwaysUrgent: boolean; // a call from this contact is always scored high urgency
   notes?: string;
 }
 
+// isVip = warm greeting (close circle). alwaysUrgent = auto-high urgency, ONLY for
+// mom, dad, and both sisters — everyone else is high only if the transcript is urgent.
 const ROSTER: Row[] = [
-  { name: 'Nadine Bayoun', phoneNumber: '+15148393917', language: 'en', isVip: true, notes: 'Mother.' },
-  { name: 'Abed Bayoun',   phoneNumber: '+15142430651', language: 'en', isVip: true, notes: 'Father.' },
-  { name: 'Ghada',         phoneNumber: '+15147578338', language: 'en', isVip: true, notes: 'Sister. Name pronounced "RADA".' },
-  { name: 'Yasmina',       phoneNumber: '+15145493840', language: 'en', isVip: true, notes: 'Sister.' },
-  { name: 'Julio',         phoneNumber: '+15145023726', language: 'fr', isVip: true, notes: 'Brother-in-law. Speak French.' },
-  { name: 'Faycal',        phoneNumber: '+15148626868', language: 'en', isVip: true, notes: 'Best friend. Name pronounced "FAISSAL".' },
-  { name: 'Karim',         phoneNumber: '+15142339340', language: 'en', isVip: true, notes: "Faycal's brother." },
-  { name: 'Nada',          phoneNumber: '+15149288848', language: 'fr', isVip: true, notes: 'Grandmother (teta Nada). Speak French.' },
-  { name: 'Issam',         phoneNumber: '+15149279713', language: 'fr', isVip: true, notes: 'Grandfather (jeddo Issam). Speak simple, clear French — he struggles with foreign languages.' },
+  { name: 'Nadine Bayoun', phoneNumber: '+15148393917', language: 'en', isVip: true,  alwaysUrgent: true,  notes: 'Mother.' },
+  { name: 'Abed Bayoun',   phoneNumber: '+15142430651', language: 'en', isVip: true,  alwaysUrgent: true,  notes: 'Father.' },
+  { name: 'Ghada',         phoneNumber: '+15147578338', language: 'en', isVip: true,  alwaysUrgent: true,  notes: 'Sister. Name pronounced "RADA".' },
+  { name: 'Yasmina',       phoneNumber: '+15145493840', language: 'en', isVip: true,  alwaysUrgent: true,  notes: 'Sister.' },
+  { name: 'Julio',         phoneNumber: '+15145023726', language: 'fr', isVip: true,  alwaysUrgent: false, notes: 'Brother-in-law. Speak French.' },
+  { name: 'Faycal',        phoneNumber: '+15148626868', language: 'en', isVip: true,  alwaysUrgent: false, notes: 'Best friend. Name pronounced "FAISSAL".' },
+  { name: 'Karim',         phoneNumber: '+15142339340', language: 'en', isVip: false, alwaysUrgent: false, notes: "Faycal's brother." },
+  { name: 'Nada',          phoneNumber: '+15149288848', language: 'fr', isVip: false, alwaysUrgent: false, notes: 'Grandmother (teta Nada). Speak French.' },
+  { name: 'Issam',         phoneNumber: '+15149279713', language: 'fr', isVip: false, alwaysUrgent: false, notes: 'Grandfather (jeddo Issam). Speak simple, clear French — he struggles with foreign languages.' },
 ];
 
 async function main() {
@@ -53,8 +56,8 @@ async function main() {
   for (const r of ROSTER) {
     await prisma.contact.upsert({
       where: { phoneNumber: r.phoneNumber },
-      update: { name: r.name, language: r.language, isVip: r.isVip, notes: r.notes ?? null },
-      create: { phoneNumber: r.phoneNumber, name: r.name, language: r.language, isVip: r.isVip, notes: r.notes ?? null },
+      update: { name: r.name, language: r.language, isVip: r.isVip, alwaysUrgent: r.alwaysUrgent, notes: r.notes ?? null },
+      create: { phoneNumber: r.phoneNumber, name: r.name, language: r.language, isVip: r.isVip, alwaysUrgent: r.alwaysUrgent, notes: r.notes ?? null },
     });
     const flag = r.language === 'fr' ? '  <-- FRENCH' : '';
     console.log(`  ok  ${r.phoneNumber} ${r.language} ${r.name}${flag}`);
