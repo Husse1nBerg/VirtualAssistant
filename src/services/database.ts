@@ -94,12 +94,18 @@ export async function createNotification(input: CreateNotificationInput) {
 
 // ── Contact Operations ───────────────────────────────
 
-/** Normalize to E.164 digits-only+plus for consistent matching. */
+/** Normalize to E.164 for consistent matching. Adds the North American country
+ *  code so a bare 10-digit number (e.g. 514-839-3917) becomes +15148393917,
+ *  matching Twilio's inbound `From`. Non-NANP numbers must already carry a `+`. */
 function normalizePhone(raw: string): string {
   // Strip spaces, dashes, parentheses, dots
   const stripped = raw.replace(/[\s\-().]/g, '');
-  // Ensure leading +
-  return stripped.startsWith('+') ? stripped : `+${stripped}`;
+  if (stripped.startsWith('+')) return stripped;
+  const digits = stripped.replace(/\D/g, '');
+  // NANP: 10 digits → prepend +1; 11 digits starting with 1 → prepend +
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return `+${digits}`;
 }
 
 export async function getContactByPhone(phoneNumber: string): Promise<Contact | null> {
