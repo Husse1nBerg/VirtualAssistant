@@ -26,16 +26,19 @@ interface Row {
   notes?: string;
 }
 
+// isVip drives BOTH warm greeting tone AND high urgency scoring. Set true only for
+// Hussein's explicit "score high" inner circle: parents, sisters, brother-in-law, best friend.
+// Grandparents + friend's brother are contacts (name/language recognized) but not high-urgency.
 const ROSTER: Row[] = [
-  { name: 'Nadine Bayoun', phoneNumber: '+15148393917', language: 'en', isVip: true, notes: 'Mother.' },
-  { name: 'Abed Bayoun',   phoneNumber: '+15142430651', language: 'en', isVip: true, notes: 'Father.' },
-  { name: 'Ghada',         phoneNumber: '+15147578338', language: 'en', isVip: true, notes: 'Sister. Name pronounced "RADA".' },
-  { name: 'Yasmina',       phoneNumber: '+15145493840', language: 'en', isVip: true, notes: 'Sister.' },
-  { name: 'Julio',         phoneNumber: '+15145023726', language: 'fr', isVip: true, notes: 'Brother-in-law. Speak French.' },
-  { name: 'Faycal',        phoneNumber: '+15148626868', language: 'en', isVip: true, notes: 'Best friend. Name pronounced "FAISSAL".' },
-  { name: 'Karim',         phoneNumber: '+15142339340', language: 'en', isVip: true, notes: "Faycal's brother." },
-  { name: 'Nada',          phoneNumber: '+15149288848', language: 'fr', isVip: true, notes: 'Grandmother (teta Nada). Speak French.' },
-  { name: 'Issam',         phoneNumber: '+15149279713', language: 'fr', isVip: true, notes: 'Grandfather (jeddo Issam). Speak simple, clear French — he struggles with foreign languages.' },
+  { name: 'Nadine Bayoun', phoneNumber: '+15148393917', language: 'en', isVip: true,  notes: 'Mother.' },
+  { name: 'Abed Bayoun',   phoneNumber: '+15142430651', language: 'en', isVip: true,  notes: 'Father.' },
+  { name: 'Ghada',         phoneNumber: '+15147578338', language: 'en', isVip: true,  notes: 'Sister. Name pronounced "RADA".' },
+  { name: 'Yasmina',       phoneNumber: '+15145493840', language: 'en', isVip: true,  notes: 'Sister.' },
+  { name: 'Julio',         phoneNumber: '+15145023726', language: 'fr', isVip: true,  notes: 'Brother-in-law. Speak French.' },
+  { name: 'Faycal',        phoneNumber: '+15148626868', language: 'en', isVip: true,  notes: 'Best friend. Name pronounced "FAISSAL".' },
+  { name: 'Karim',         phoneNumber: '+15142339340', language: 'en', isVip: false, notes: "Faycal's brother." },
+  { name: 'Nada',          phoneNumber: '+15149288848', language: 'fr', isVip: false, notes: 'Grandmother (teta Nada). Speak French.' },
+  { name: 'Issam',         phoneNumber: '+15149279713', language: 'fr', isVip: false, notes: 'Grandfather (jeddo Issam). Speak simple, clear French — he struggles with foreign languages.' },
 ];
 
 async function main() {

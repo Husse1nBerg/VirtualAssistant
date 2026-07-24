@@ -18,10 +18,12 @@ import {
   getContactByNameOrPhone,
   getRecentCallsByNumber,
 } from './database';
+import type { Contact } from './database';
 import { sendPostCallNotifications, sendEscalationSMS, sendSMSToRecipient } from './notification';
 import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
+import { computeUrgency } from './urgency';
 
 // ── Types ────────────────────────────────────────────
 
@@ -37,6 +39,7 @@ interface CallSession {
   ended: boolean;
   transcriptParts: { role: string; content: string }[];
   summary: CallSummary | null;
+  contact: Contact | null;  // resolved caller contact (for VIP urgency + context)
   isCommandMode?: boolean;  // true when owner called to give voice commands
 }
 
@@ -152,6 +155,7 @@ async function initializeSession(
     ended: false,
     transcriptParts: [],
     summary: null,
+    contact,
     isCommandMode,
   };
 
@@ -510,6 +514,16 @@ async function endCall(session: CallSession, status: string): Promise<void> {
 
     // Use function-extracted summary, or build a fallback from transcript
     const summary = session.summary || buildFallbackSummary(session);
+
+    // Re-score urgency from context: VIP caller → high, urgent keywords → high,
+    // silent hang-up / no speech → low, real conversation → medium. This overrides
+    // the LLM's default (which was almost always "medium").
+    summary.urgency = computeUrgency(
+      summary.urgency,
+      session.contact,
+      session.transcriptParts,
+      summary.summary
+    );
 
     // Update call log with all structured data
     await updateCallLog(session.callId, {
