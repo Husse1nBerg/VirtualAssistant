@@ -5,7 +5,7 @@ import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendEscalationSMS } from '../services/notification';
-import { getGreetingText, pickGreetingIndex } from '../services/agentPrompt';
+import { getGreetingText, pickGreetingIndex, getTtsModel } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
 import { mintStreamToken } from '../utils/streamToken';
 import { isValidDashboardToken } from '../utils/auth';
@@ -21,13 +21,15 @@ function normalizePhoneForCompare(raw: string): string {
   return raw.replace(/\D/g, '');
 }
 
-function buildGreetingText(callerName?: string, isCommandMode?: boolean, greetingIdx?: number): string {
+function buildGreetingText(callerName?: string, isCommandMode?: boolean, greetingIdx?: number, language?: string): string {
   if (isCommandMode) {
     return "Voice commands. What would you like me to do? You can say things like: text John I'll be late, or remind me to call Sarah tomorrow.";
   }
   if (callerName) {
     const firstName = callerName.trim().split(/\s+/)[0];
-    return `Hi ${firstName}! I'm Sky, Hussein's assistant — how can I help you today?`;
+    return language === 'fr'
+      ? `Bonjour ${firstName}! Je suis Sky, l'assistante d'Hussein — comment puis-je vous aider aujourd'hui?`
+      : `Hi ${firstName}! I'm Sky, Hussein's assistant — how can I help you today?`;
   }
   return getGreetingText(greetingIdx);
 }
@@ -46,9 +48,13 @@ router.get('/greeting', async (req: Request, res: Response) => {
   const isCommandMode = req.query.mode === 'command';
   const gRaw = typeof req.query.g === 'string' ? req.query.g : undefined;
   const greetingIdx = gRaw !== undefined && /^\d+$/.test(gRaw) ? Number(gRaw) : undefined;
-  const greetingText = buildGreetingText(callerName, isCommandMode, greetingIdx);
+  const language = typeof req.query.lang === 'string' ? req.query.lang : 'en';
+  const greetingText = buildGreetingText(callerName, isCommandMode, greetingIdx, language);
+  const ttsModel = getTtsModel(language);
 
-  const cached = greetingCache.get(greetingText);
+  // Cache key includes the model so the same words in different languages/voices don't collide.
+  const cacheKey = `${ttsModel}::${greetingText}`;
+  const cached = greetingCache.get(cacheKey);
   if (cached) {
     res.setHeader('Content-Type', 'audio/mpeg');
     return res.send(cached);
@@ -56,7 +62,7 @@ router.get('/greeting', async (req: Request, res: Response) => {
 
   try {
     const dgRes = await fetch(
-      'https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=mp3',
+      `https://api.deepgram.com/v1/speak?model=${ttsModel}&encoding=mp3`,
       {
         method: 'POST',
         headers: {
@@ -77,7 +83,7 @@ router.get('/greeting', async (req: Request, res: Response) => {
       const oldest = greetingCache.keys().next().value;
       if (oldest !== undefined) greetingCache.delete(oldest);
     }
-    greetingCache.set(greetingText, buffer);
+    greetingCache.set(cacheKey, buffer);
     log.info({ ooo: getEnv().OOO_ENABLED, callerName }, 'Greeting audio generated and cached');
     res.setHeader('Content-Type', 'audio/mpeg');
     res.send(buffer);
@@ -167,7 +173,7 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
       try {
         const contact = await getContactByPhone(from);
         if (contact) {
-          greetingParams = `?caller=${encodeURIComponent(contact.name)}&vip=${contact.isVip}`;
+          greetingParams = `?caller=${encodeURIComponent(contact.name)}&vip=${contact.isVip}&lang=${encodeURIComponent(contact.language)}`;
         }
       } catch (err) {
         log.warn({ err }, 'Failed to look up contact for greeting — using generic greeting');
