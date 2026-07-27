@@ -36,8 +36,11 @@ services:
         sync: false
       - key: TTS_PROVIDER
         value: deepgram
+      # Absolute path onto the mounted persistent disk. A relative file: URL is
+      # resolved against the prisma/ schema folder (ephemeral!), which silently
+      # wiped the DB on every deploy — contacts and call history were lost.
       - key: DATABASE_URL
-        value: file:./data/assistant.db
+        value: file:/opt/render/project/src/data/assistant.db
       - key: LOG_LEVEL
         value: info
     disk:
