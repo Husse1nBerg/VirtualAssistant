@@ -36,6 +36,7 @@ const ROSTER: Row[] = [
   { name: 'Yasmina',       phoneNumber: '+15145493840', language: 'en', isVip: true,  alwaysUrgent: true,  notes: 'Sister.' },
   { name: 'Julio',         phoneNumber: '+15145023726', language: 'fr', isVip: true,  alwaysUrgent: false, notes: 'Brother-in-law. Speak French.' },
   { name: 'Faycal',        phoneNumber: '+15148626868', language: 'en', isVip: true,  alwaysUrgent: false, notes: 'Best friend. Name pronounced "FAISSAL".' },
+  { name: 'Talal',         phoneNumber: '+15149299570', language: 'en', isVip: true,  alwaysUrgent: false, notes: 'Close contact.' },
   { name: 'Karim',         phoneNumber: '+15142339340', language: 'en', isVip: false, alwaysUrgent: false, notes: "Faycal's brother." },
   { name: 'Nada',          phoneNumber: '+15149288848', language: 'fr', isVip: false, alwaysUrgent: false, notes: 'Grandmother (teta Nada). Speak French.' },
   { name: 'Issam',         phoneNumber: '+15149279713', language: 'fr', isVip: false, alwaysUrgent: false, notes: 'Grandfather (jeddo Issam). Speak simple, clear French — he struggles with foreign languages.' },

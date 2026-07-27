@@ -39,7 +39,7 @@ function getTtsModel(language: string): string {
   return TTS_MODELS[language] ?? TTS_MODELS['en'];
 }
 
-function getGreetingTextForLanguage(language: string, name?: string): string {
+function getGreetingTextForLanguage(language: string, name?: string, greetingIdx?: number): string {
   // Greet by first name only — "Hi Nadine!", never "Hi Nadine Bayoun!".
   const firstName = name?.trim().split(/\s+/)[0];
   if (language === 'fr') {
@@ -49,7 +49,7 @@ function getGreetingTextForLanguage(language: string, name?: string): string {
   }
   return firstName
     ? `Hi ${firstName}! I'm Sky, Hussein's assistant — how can I help you today?`
-    : getGreetingText();
+    : getGreetingText(greetingIdx);
 }
 
 // ── Caller Context ────────────────────────────────────
@@ -57,6 +57,9 @@ function getGreetingTextForLanguage(language: string, name?: string): string {
 export interface CallerContext {
   contact: Contact | null;
   recentCalls: { reasonForCall: string | null; startedAt: Date }[];
+  /** Index into GREETINGS chosen at /voice/inbound time, so the agent's context
+   *  matches the exact greeting audio the caller heard. */
+  greetingIdx?: number;
 }
 
 export function buildCallerContextBlock(
@@ -105,24 +108,27 @@ export function buildCallerContextBlock(
 // ── Out of office / holiday mode ─────────────────────
 // When OOO_ENABLED is true, greeting and prompt tell callers you're away; agent still takes messages.
 
-// A pool of natural openers. One is picked at random per call so the greeting
-// never sounds like the same memorized speech twice.
-const GREETINGS = [
+// A pool of natural openers. The index is picked ONCE per call (in /voice/inbound)
+// and shared by both the TTS audio and the agent's context history, so Sky always
+// knows exactly what the caller heard. Includes a bare "Hello?" — for that one,
+// the prompt tells Sky to introduce herself after the caller replies.
+export const GREETINGS = [
   "Hi, I'm Sky, Hussein's assistant — how can I help you today?",
   "Hey there — this is Sky, Hussein's assistant. What can I do for you?",
   "Hi, you've reached Sky, Hussein's assistant. What can I help you with?",
   "Hello! Sky here — I look after Hussein's calls. How can I help?",
   "Hi there, I'm Sky, Hussein's assistant. What's up?",
+  'Hello?',
 ];
 
-function pickGreeting(): string {
-  return GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+export function pickGreetingIndex(): number {
+  return Math.floor(Math.random() * GREETINGS.length);
 }
 
-export function getGreetingText(): string {
+export function getGreetingText(greetingIdx?: number): string {
   const env = getEnv();
   if (!env.OOO_ENABLED) {
-    return pickGreeting();
+    return GREETINGS[greetingIdx ?? pickGreetingIndex()] ?? GREETINGS[0];
   }
   const until = env.OOO_UNTIL?.trim();
   const message = env.OOO_MESSAGE?.trim();
@@ -213,7 +219,10 @@ INTERRUPTIONS & PICKING BACK UP — CRITICAL
 - Summarize ONCE at the end from the full accumulated picture — don't re-confirm each fragment separately, and never capture the same request twice.
 
 OPENING
-You've already opened with a short, warm greeting introducing yourself as Sky — the exact wording varies from call to call. Do NOT introduce yourself again or repeat "I'm Sky, Hussein's assistant"; the caller already heard it. Wait for the caller to speak first. Then:
+Your first assistant message in this conversation history is EXACTLY what the caller already heard — the wording varies from call to call. Check it:
+- If it introduced you as Sky: do NOT introduce yourself again; the caller already heard it.
+- If it was just a bare "Hello?": you have NOT introduced yourself yet. When the caller responds, introduce yourself naturally and vary the wording — "Hi! I'm Sky, Hussein's assistant — what can I do for you?" or "Hey, this is Sky, Hussein's assistant. How can I help?" — then carry on.
+Wait for the caller to speak first. Then:
 - Vary your phrasing and intonation naturally — you're a person, not a recording. Never deliver the same line the same way twice.
 - Simple greeting ("Hi", "Hello", "Hey") → "Hi! What can I do for you?" or "Hey there — what's the message for Hussein?"
 - Blank/noise → stay silent. Never say "I'm listening."
@@ -475,7 +484,7 @@ function buildListen(ctx?: CallerContext) {
 export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
   const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
   const lang = ctx?.contact?.language ?? 'en';
-  const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined);
+  const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined, ctx?.greetingIdx);
 
   return {
     ...baseSettings,
@@ -505,7 +514,7 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
 export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string, ctx?: CallerContext) {
   const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
   const lang = ctx?.contact?.language ?? 'en';
-  const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined);
+  const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined, ctx?.greetingIdx);
 
   // V1 only allows claude-3-5-haiku-latest | claude-sonnet-4-20250514 (think-models API).
   // Pass Anthropic key via endpoint.headers so Deepgram can call Claude with your key.
