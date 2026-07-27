@@ -26,7 +26,8 @@ function buildGreetingText(callerName?: string, isCommandMode?: boolean): string
     return "Voice commands. What would you like me to do? You can say things like: text John I'll be late, or remind me to call Sarah tomorrow.";
   }
   if (callerName) {
-    return `Hi ${callerName}! I'm Sky, Hussein's assistant — how can I help you today?`;
+    const firstName = callerName.trim().split(/\s+/)[0];
+    return `Hi ${firstName}! I'm Sky, Hussein's assistant — how can I help you today?`;
   }
   return getGreetingText();
 }

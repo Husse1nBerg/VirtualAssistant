@@ -40,13 +40,15 @@ function getTtsModel(language: string): string {
 }
 
 function getGreetingTextForLanguage(language: string, name?: string): string {
+  // Greet by first name only — "Hi Nadine!", never "Hi Nadine Bayoun!".
+  const firstName = name?.trim().split(/\s+/)[0];
   if (language === 'fr') {
-    return name
-      ? `Bonjour ${name}! Je suis Sky, l'assistante d'Hussein — comment puis-je vous aider aujourd'hui?`
+    return firstName
+      ? `Bonjour ${firstName}! Je suis Sky, l'assistante d'Hussein — comment puis-je vous aider aujourd'hui?`
       : "Bonjour, je suis Sky, l'assistante d'Hussein — comment puis-je vous aider aujourd'hui?";
   }
-  return name
-    ? `Hi ${name}! I'm Sky, Hussein's assistant — how can I help you today?`
+  return firstName
+    ? `Hi ${firstName}! I'm Sky, Hussein's assistant — how can I help you today?`
     : getGreetingText();
 }
 
