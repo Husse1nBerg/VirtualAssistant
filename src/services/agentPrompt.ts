@@ -35,7 +35,7 @@ const TTS_MODELS: Record<string, string> = {
   fr: 'aura-2-agathe-fr',
 };
 
-function getTtsModel(language: string): string {
+export function getTtsModel(language: string): string {
   return TTS_MODELS[language] ?? TTS_MODELS['en'];
 }
 
