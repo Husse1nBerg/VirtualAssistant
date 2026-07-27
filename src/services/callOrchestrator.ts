@@ -112,6 +112,10 @@ async function initializeSession(
   const fromNumber = startData.customParameters?.from || 'unknown';
   const toNumber = startData.customParameters?.to || 'unknown';
   const mode = startData.customParameters?.mode === 'command' ? 'command' : 'default';
+  // Greeting index picked at /voice/inbound — keeps the agent's context history
+  // in sync with the exact greeting audio the caller heard.
+  const gRaw = startData.customParameters?.g;
+  const greetingIdx = gRaw !== undefined && /^\d+$/.test(gRaw) ? Number(gRaw) : undefined;
 
   // Reject direct/forged Media Stream connections: the token is minted only by our
   // /voice/inbound TwiML and binds this callSid + mode. Without this, anyone could
@@ -141,7 +145,7 @@ async function initializeSession(
     // non-fatal; continue with empty context
   }
 
-  const callerCtx = { contact, recentCalls };
+  const callerCtx = { contact, recentCalls, greetingIdx };
 
   const session: CallSession = {
     callId: callLog.id,

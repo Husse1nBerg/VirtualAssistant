@@ -5,7 +5,7 @@ import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendEscalationSMS } from '../services/notification';
-import { getGreetingText } from '../services/agentPrompt';
+import { getGreetingText, pickGreetingIndex } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
 import { mintStreamToken } from '../utils/streamToken';
 import { isValidDashboardToken } from '../utils/auth';
@@ -21,7 +21,7 @@ function normalizePhoneForCompare(raw: string): string {
   return raw.replace(/\D/g, '');
 }
 
-function buildGreetingText(callerName?: string, isCommandMode?: boolean): string {
+function buildGreetingText(callerName?: string, isCommandMode?: boolean, greetingIdx?: number): string {
   if (isCommandMode) {
     return "Voice commands. What would you like me to do? You can say things like: text John I'll be late, or remind me to call Sarah tomorrow.";
   }
@@ -29,7 +29,7 @@ function buildGreetingText(callerName?: string, isCommandMode?: boolean): string
     const firstName = callerName.trim().split(/\s+/)[0];
     return `Hi ${firstName}! I'm Sky, Hussein's assistant — how can I help you today?`;
   }
-  return getGreetingText();
+  return getGreetingText(greetingIdx);
 }
 
 /**
@@ -44,7 +44,9 @@ router.get('/greeting', async (req: Request, res: Response) => {
   const env = getEnv();
   const callerName = typeof req.query.caller === 'string' ? req.query.caller : undefined;
   const isCommandMode = req.query.mode === 'command';
-  const greetingText = buildGreetingText(callerName, isCommandMode);
+  const gRaw = typeof req.query.g === 'string' ? req.query.g : undefined;
+  const greetingIdx = gRaw !== undefined && /^\d+$/.test(gRaw) ? Number(gRaw) : undefined;
+  const greetingText = buildGreetingText(callerName, isCommandMode, greetingIdx);
 
   const cached = greetingCache.get(greetingText);
   if (cached) {
@@ -158,6 +160,7 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
 
     // Look up contact for personalized greeting (non-fatal if it fails). Skip when owner is calling for voice commands.
     let greetingParams = '';
+    let greetingIdx: number | undefined;
     if (isOwnerCall) {
       greetingParams = '?mode=command';
     } else {
@@ -168,6 +171,12 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
         }
       } catch (err) {
         log.warn({ err }, 'Failed to look up contact for greeting — using generic greeting');
+      }
+      if (!greetingParams) {
+        // Unknown caller: pick the random greeting HERE so the TTS audio and the
+        // agent's context history use the same one (passed via ?g= and stream param).
+        greetingIdx = pickGreetingIndex();
+        greetingParams = `?g=${greetingIdx}`;
       }
     }
 
@@ -195,6 +204,9 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
     stream.parameter({ name: 'mode', value: mode });
     // Signed token binds callSid+mode so the WS side can reject direct/forged connections.
     stream.parameter({ name: 'token', value: mintStreamToken(callSid, mode) });
+    if (greetingIdx !== undefined) {
+      stream.parameter({ name: 'g', value: String(greetingIdx) });
+    }
 
     return res.send(twiml.toString());
   } catch (err) {
