@@ -191,7 +191,8 @@ export async function sendPostCallNotifications(
 export async function sendRecordingOnlyNotification(
   callLogId: string,
   _recordingUrl: string,
-  callerInfo?: { fromNumber: string; callerName: string | null }
+  callerInfo?: { fromNumber: string; callerName: string | null },
+  durationSeconds?: number | null
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
@@ -207,12 +208,18 @@ export async function sendRecordingOnlyNotification(
 
   const body = `📞 Call recording — ${callerDisplay}`;
 
+  // Twilio mp3 recordings run ~32 kbps (~4 KB/s). MMS media reliably delivers only up to
+  // ~600 KB, so past ~150s the attachment silently fails to deliver. For long calls send a
+  // tappable link instead (plain SMS, no size limit); keep inline MMS audio for short ones.
+  const RECORDING_MMS_MAX_SECONDS = 150;
+  const useLink = durationSeconds == null || durationSeconds > RECORDING_MMS_MAX_SECONDS;
+
   try {
     const msg = await getTwilioClient().messages.create({
-      body,
+      body: useLink ? `${body}\nListen: ${recordingProxyUrl}` : body,
       from: env.TWILIO_PHONE_NUMBER,
       to,
-      mediaUrl: [recordingProxyUrl],
+      ...(useLink ? {} : { mediaUrl: [recordingProxyUrl] }),
       statusCallback,
     });
     await createNotification({
@@ -223,7 +230,7 @@ export async function sendRecordingOnlyNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId, messageSid: msg.sid }, 'Recording sent via MMS');
+    log.info({ callLogId, messageSid: msg.sid, durationSeconds, delivery: useLink ? 'link' : 'mms' }, 'Recording sent');
   } catch (err: unknown) {
     log.error({ callLogId, err }, 'Failed to send recording SMS');
   }
