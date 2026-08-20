@@ -380,21 +380,29 @@ async function handleEndCallSummary(
 
   log.info({ callId: session.callId, summary }, 'Call summary extracted via function call');
 
-  if (session.agentWs?.readyState === WebSocket.OPEN) {
-    if (clientSide) {
-      // client_side: Deepgram does not want a FunctionCallResponse — inject speech directly
-      session.agentWs.send(JSON.stringify({
-        type: 'InjectAgentMessage',
-        message: 'Thanks for calling. Take care!',
-      }));
-    } else {
-      session.agentWs.send(JSON.stringify({
-        type: 'FunctionCallResponse',
-        function_call_id: functionCallId,
-        output: 'Summary captured. You may now say goodbye to the caller.',
-      }));
-    }
+  if (session.agentWs?.readyState === WebSocket.OPEN && !clientSide) {
+    // Note: no InjectAgentMessage on client_side — the agent already says goodbye in the
+    // caller's language per its prompt; a hardcoded English injection tacked "Thanks for
+    // calling. Take care!" onto the end of French calls.
+    session.agentWs.send(JSON.stringify({
+      type: 'FunctionCallResponse',
+      function_call_id: functionCallId,
+      output: 'Summary captured. Say a brief goodbye if you have not already. The call will end shortly.',
+    }));
   }
+
+  // Hang up shortly after the summary is captured. Nothing else ever ends the call, so
+  // polite callers ("merci beaucoup" x4) keep the agent replying forever. The grace period
+  // lets the final goodbye play out before Twilio tears the call down.
+  const HANGUP_GRACE_MS = 8000;
+  setTimeout(() => {
+    if (session.ended) return;
+    getTwilioClient()
+      .calls(session.callSid)
+      .update({ status: 'completed' })
+      .then(() => log.info({ callId: session.callId }, 'Call hung up after summary'))
+      .catch((err) => log.error({ callId: session.callId, err }, 'Failed to hang up after summary'));
+  }, HANGUP_GRACE_MS);
 }
 
 // ── Voice command: send_sms ───────────────────────────
