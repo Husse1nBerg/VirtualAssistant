@@ -4,7 +4,7 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
-import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendEscalationSMS } from '../services/notification';
+import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendCombinedCallNotification, sendEscalationSMS } from '../services/notification';
 import { getGreetingText, pickGreetingIndex, getTtsModel } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
 import { mintStreamToken } from '../utils/streamToken';
@@ -249,12 +249,32 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
     const callLog = await getCallLogBySid(callSid);
     if (callLog) {
       await updateCallLog(callLog.id, { recordingSid, recordingUrl });
-      sendRecordingOnlyNotification(callLog.id, recordingUrl, {
-        fromNumber: callLog.fromNumber,
-        callerName: callLog.callerName,
-      }, callLog.durationSeconds).catch((err) =>
-        log.error({ callSid, err }, 'Failed to send recording notification')
-      );
+
+      // Primary send path: recording is ready, so send ONE message with summary +
+      // full transcript + recording. markSummarySent atomically claims the send so the
+      // /voice/status 90s fallback can't also text the owner (avoids a duplicate SMS).
+      if (await markSummarySent(callLog.id)) {
+        const withTranscripts = await getCallLogById(callLog.id);
+        if (withTranscripts) {
+          sendCombinedCallNotification(
+            {
+              ...withTranscripts,
+              transcripts: withTranscripts.transcripts?.map((t) => ({ role: t.role, content: t.content })),
+            },
+            recordingUrl
+          ).catch((err) => log.error({ callSid, err }, 'Failed to send combined summary + recording notification'));
+        }
+      } else {
+        // The 90s fallback already sent summary + transcript without the recording
+        // (it arrived unusually late). Don't lose it — send it as a follow-up.
+        log.info({ callSid }, 'Summary already sent — sending recording as a follow-up');
+        sendRecordingOnlyNotification(callLog.id, recordingUrl, {
+          fromNumber: callLog.fromNumber,
+          callerName: callLog.callerName,
+        }, callLog.durationSeconds).catch((err) =>
+          log.error({ callSid, err }, 'Failed to send recording notification')
+        );
+      }
     } else {
       log.warn({ callSid }, 'Recording received but no call log found for this CallSid');
     }

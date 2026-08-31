@@ -12,14 +12,13 @@ import {
   createCallLog,
   getCallLogBySid,
   updateCallLog,
-  markSummarySent,
   addTranscript,
   getContactByPhone,
   getContactByNameOrPhone,
   getRecentCallsByNumber,
 } from './database';
 import type { Contact } from './database';
-import { sendPostCallNotifications, sendEscalationSMS, sendSMSToRecipient } from './notification';
+import { sendEscalationSMS, sendSMSToRecipient } from './notification';
 import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
@@ -553,23 +552,15 @@ async function endCall(session: CallSession, status: string): Promise<void> {
       summary: summary.summary,
     });
 
-    // Send summary + line-by-line transcript (Caller/Agent) immediately.
-    // markSummarySent atomically claims the send so the /voice/status 90s fallback
-    // can't also text the owner (avoids duplicate summary SMS).
-    if (await markSummarySent(session.callId)) {
-      await sendPostCallNotifications(
-        summary,
-        session.callId,
-        session.fromNumber,
-        session.transcriptParts
-      );
-    } else {
-      log.info({ callId: session.callId }, 'Summary already sent — skipping duplicate');
-    }
-    // Recording (link or MMS) is sent separately when Twilio calls /voice/recording-status.
+    // Don't send here. The notification (summary + full transcript + recording, embedded
+    // mp3 or link depending on length) is sent as ONE message once the recording is ready,
+    // via /voice/recording-status (sendCombinedCallNotification) — that's DB-driven (reads
+    // the transcript rows already persisted per-turn by addTranscript), so it isn't lost if
+    // anything above throws. If the recording never arrives, /voice/status's 90s fallback
+    // sends summary + transcript without it, so the transcript always goes out either way.
     log.info(
       { callId: session.callId, durationSeconds, urgency: summary.urgency },
-      'Call completed; summary sent; recording will be sent when ready'
+      'Call completed; notification will be sent once the recording is ready (or via 90s fallback)'
     );
   } catch (err) {
     log.error({ callId: session.callId, err }, 'Error during call wrap-up');
