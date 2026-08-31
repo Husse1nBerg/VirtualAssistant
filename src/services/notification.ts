@@ -188,11 +188,17 @@ export async function sendPostCallNotifications(
  * Includes caller name/number so the owner knows which call this recording belongs to.
  * Uses a proxy link so the recipient can open the recording without Twilio Basic Auth.
  */
+// Twilio mp3 recordings run ~68 kbps (~8.5 KB/s). MMS media delivers reliably only up to
+// ~600 KB, so past ~70s the attachment silently fails (transcript still arrives via the
+// separate summary SMS — hence the old "transcript but no recording" bug). Below this,
+// embed the mp3 inline; above it, send a tappable link instead (no size limit, always delivers).
+const RECORDING_MMS_MAX_SECONDS = 60;
+
 export async function sendRecordingOnlyNotification(
   callLogId: string,
   _recordingUrl: string,
   callerInfo?: { fromNumber: string; callerName: string | null },
-  _durationSeconds?: number | null
+  durationSeconds?: number | null
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
@@ -206,18 +212,17 @@ export async function sendRecordingOnlyNotification(
       : callerInfo.fromNumber
     : 'Recent call';
 
-  // Always send the recording as a tappable link, never as an MMS attachment.
-  // Twilio mp3 recordings run ~68 kbps, so even a ~90s call exceeds the ~600 KB MMS media
-  // limit and Twilio silently drops the attachment (transcript still arrives — hence the
-  // "transcript but no recording" bug). A plain-SMS link has no size limit and always
-  // delivers; tapping it streams the audio through our authenticated proxy.
-  const body = `📞 Call recording — ${callerDisplay}\nListen: ${recordingProxyUrl}`;
+  const useLink = durationSeconds == null || durationSeconds > RECORDING_MMS_MAX_SECONDS;
+  const body = useLink
+    ? `📞 Call recording — ${callerDisplay}\nListen: ${recordingProxyUrl}`
+    : `📞 Call recording — ${callerDisplay}`;
 
   try {
     const msg = await getTwilioClient().messages.create({
       body,
       from: env.TWILIO_PHONE_NUMBER,
       to,
+      ...(useLink ? {} : { mediaUrl: [recordingProxyUrl] }),
       statusCallback,
     });
     await createNotification({
@@ -228,13 +233,15 @@ export async function sendRecordingOnlyNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId, messageSid: msg.sid }, 'Recording link sent');
+    log.info({ callLogId, messageSid: msg.sid, delivery: useLink ? 'link' : 'mms' }, 'Recording sent');
   } catch (err: unknown) {
     log.error({ callLogId, err }, 'Failed to send recording SMS');
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
-      await sendWhatsApp(`${body}: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
+      // WhatsApp has no MMS-style size ceiling here, so always send the link (avoids
+      // duplicating it when `body` already contains "Listen: {url}").
+      await sendWhatsApp(`📞 Call recording — ${callerDisplay}\nListen: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
     } catch (err) {
       log.warn({ callLogId, err }, 'WhatsApp recording notification failed');
     }
