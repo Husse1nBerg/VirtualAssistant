@@ -19,6 +19,7 @@ type CallLogForNotification = {
   promisedActions: string | null;
   confidenceScore: number | null;
   summary: string | null;
+  durationSeconds: number | null;
   transcripts?: Array<{ role: string; content: string }>;
 };
 
@@ -188,11 +189,17 @@ export async function sendPostCallNotifications(
  * Includes caller name/number so the owner knows which call this recording belongs to.
  * Uses a proxy link so the recipient can open the recording without Twilio Basic Auth.
  */
+// Twilio mp3 recordings run ~68 kbps (~8.5 KB/s). MMS media delivers reliably only up to
+// ~600 KB, so past ~70s the attachment silently fails (transcript still arrives via the
+// separate summary SMS — hence the old "transcript but no recording" bug). Below this,
+// embed the mp3 inline; above it, send a tappable link instead (no size limit, always delivers).
+const RECORDING_MMS_MAX_SECONDS = 60;
+
 export async function sendRecordingOnlyNotification(
   callLogId: string,
   _recordingUrl: string,
   callerInfo?: { fromNumber: string; callerName: string | null },
-  _durationSeconds?: number | null
+  durationSeconds?: number | null
 ): Promise<void> {
   const log = getLogger();
   const env = getEnv();
@@ -206,18 +213,17 @@ export async function sendRecordingOnlyNotification(
       : callerInfo.fromNumber
     : 'Recent call';
 
-  // Always send the recording as a tappable link, never as an MMS attachment.
-  // Twilio mp3 recordings run ~68 kbps, so even a ~90s call exceeds the ~600 KB MMS media
-  // limit and Twilio silently drops the attachment (transcript still arrives — hence the
-  // "transcript but no recording" bug). A plain-SMS link has no size limit and always
-  // delivers; tapping it streams the audio through our authenticated proxy.
-  const body = `📞 Call recording — ${callerDisplay}\nListen: ${recordingProxyUrl}`;
+  const useLink = durationSeconds == null || durationSeconds > RECORDING_MMS_MAX_SECONDS;
+  const body = useLink
+    ? `📞 Call recording — ${callerDisplay}\nListen: ${recordingProxyUrl}`
+    : `📞 Call recording — ${callerDisplay}`;
 
   try {
     const msg = await getTwilioClient().messages.create({
       body,
       from: env.TWILIO_PHONE_NUMBER,
       to,
+      ...(useLink ? {} : { mediaUrl: [recordingProxyUrl] }),
       statusCallback,
     });
     await createNotification({
@@ -228,13 +234,15 @@ export async function sendRecordingOnlyNotification(
       messageId: msg.sid,
       sentAt: new Date(),
     });
-    log.info({ callLogId, messageSid: msg.sid }, 'Recording link sent');
+    log.info({ callLogId, messageSid: msg.sid, delivery: useLink ? 'link' : 'mms' }, 'Recording sent');
   } catch (err: unknown) {
     log.error({ callLogId, err }, 'Failed to send recording SMS');
   }
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
-      await sendWhatsApp(`${body}: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
+      // WhatsApp has no MMS-style size ceiling here, so always send the link (avoids
+      // duplicating it when `body` already contains "Listen: {url}").
+      await sendWhatsApp(`📞 Call recording — ${callerDisplay}\nListen: ${recordingProxyUrl}`, callLogId, env.OWNER_WHATSAPP_NUMBER);
     } catch (err) {
       log.warn({ callLogId, err }, 'WhatsApp recording notification failed');
     }
@@ -242,9 +250,12 @@ export async function sendRecordingOnlyNotification(
 }
 
 /**
- * Sends one SMS (and optionally WhatsApp) with summary + recording link (or MMS with audio).
- * Use when recording is ready and summary was NOT already sent (e.g. 90s fallback path).
- * Recording link is a proxy URL so the recipient can open it without Twilio Basic Auth.
+ * Sends ONE message with summary + full transcript + recording — mp3 embedded inline for
+ * calls <=RECORDING_MMS_MAX_SECONDS, tappable link (chunked like any long SMS, so the
+ * transcript is never truncated) for longer/"problematic" calls. This is the primary,
+ * authoritative send: it fires once the recording is ready (/voice/recording-status);
+ * if the recording never arrives, the /voice/status 90s fallback sends summary + transcript
+ * without it (sendSummaryOnlyFromCallLog) so the transcript still always goes out.
  */
 export async function sendCombinedCallNotification(
   callLog: CallLogForNotification,
@@ -255,31 +266,44 @@ export async function sendCombinedCallNotification(
   const summaryText = formatSummaryFromCallLog(callLog);
   const recordingProxyUrl = `${env.BASE_URL}/voice/recording/${callLog.id}${env.DASHBOARD_TOKEN ? `?token=${encodeURIComponent(env.DASHBOARD_TOKEN)}` : ''}`;
   const statusCallback = `${env.BASE_URL}/sms/status`;
-  // Recording goes as a tappable link, not MMS media — Twilio drops oversized attachments
-  // (a ~90s call already exceeds the MMS limit), which silently loses the recording.
-  const body = `${summaryText}\n\n📞 Recording: ${recordingProxyUrl}`;
-  try {
-    const msg = await getTwilioClient().messages.create({
-      body,
-      from: env.TWILIO_PHONE_NUMBER,
-      to: env.OWNER_PHONE_NUMBER,
-      statusCallback,
-    });
-    await createNotification({
-      callLogId: callLog.id,
-      channel: 'sms',
-      recipient: env.OWNER_PHONE_NUMBER,
-      status: 'sent',
-      messageId: msg.sid,
-      sentAt: new Date(),
-    });
-    log.info({ callLogId: callLog.id, messageSid: msg.sid }, 'Combined summary + recording sent via MMS');
-  } catch (err: unknown) {
-    log.error({ callLogId: callLog.id, err }, 'Failed to send combined summary MMS');
+
+  const tooLongForOneMms = summaryText.length + 60 > SMS_MAX_CHARS;
+  const useLink =
+    callLog.durationSeconds == null ||
+    callLog.durationSeconds > RECORDING_MMS_MAX_SECONDS ||
+    tooLongForOneMms;
+
+  if (useLink) {
+    // Long call (or an unusually long transcript on a short one): text + link, chunked
+    // like any long SMS so the transcript is never truncated.
+    await sendSMS(`${summaryText}\n\n📞 Recording: ${recordingProxyUrl}`, callLog.id, env.OWNER_PHONE_NUMBER);
+  } else {
+    // Short call: embed the mp3 directly in a single message.
+    try {
+      const msg = await getTwilioClient().messages.create({
+        body: summaryText,
+        from: env.TWILIO_PHONE_NUMBER,
+        to: env.OWNER_PHONE_NUMBER,
+        mediaUrl: [recordingProxyUrl],
+        statusCallback,
+      });
+      await createNotification({
+        callLogId: callLog.id,
+        channel: 'sms',
+        recipient: env.OWNER_PHONE_NUMBER,
+        status: 'sent',
+        messageId: msg.sid,
+        sentAt: new Date(),
+      });
+      log.info({ callLogId: callLog.id, messageSid: msg.sid, delivery: 'mms' }, 'Combined summary + transcript + recording sent');
+    } catch (err: unknown) {
+      log.error({ callLogId: callLog.id, err }, 'Failed to send combined summary MMS');
+    }
   }
+
   if (env.OWNER_WHATSAPP_NUMBER) {
     try {
-      await sendWhatsApp(summaryText, callLog.id, env.OWNER_WHATSAPP_NUMBER);
+      await sendWhatsApp(`${summaryText}\n\n📞 Recording: ${recordingProxyUrl}`, callLog.id, env.OWNER_WHATSAPP_NUMBER);
     } catch (err) {
       log.warn({ callLogId: callLog.id, err }, 'WhatsApp combined notification failed');
     }
