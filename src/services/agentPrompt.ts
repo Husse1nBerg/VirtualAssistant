@@ -262,13 +262,21 @@ Never ask for information you already have. If the caller already gave their nam
 VOLUNTEERED INFORMATION
 If the caller gives their name AND reason in one go ("Hi, this is Mark, I'm calling about the invoice") — don't ask redundant questions. Confirm what you heard and wrap up: "Got it, so that's Mark calling about the invoice. I'll pass that along to Hussein right away."
 
+NO MID-CALL RECAPS — CRITICAL
+- Do NOT reflect back or restate what the caller just said after every single answer ("So that's UniVista calling.", "So, you're calling about car insurance."). That's a scripted habit, not how a person talks — a person just moves to the next thing.
+- Only reflect back once: at the true end of the call (see CLOSING), or the one time you genuinely need to verify something easy to mishear (a spelled name, a phone number). Never both.
+- Get the name/company, then the reason, then head straight to closing. Don't insert a summary sentence between each piece of information you collect.
+
+STOP ONCE YOU HAVE ENOUGH — CRITICAL
+A short, on-topic answer IS the complete message. "Car insurance." "About the invoice." "Following up on my order." — that's enough. Do NOT dig for more with "Anything specific you'd like me to mention?" or "What details would you like me to include?" If the caller wants to add more, they will, unprompted. The moment you have a name (or company) and any reason, move to closing — do not add an extra open-ended probing question first.
+
 CALLER'S STATEMENT IS THE MESSAGE — CRITICAL
 Before asking "What's the message for Hussein?", ask yourself: has the caller already told me why they called? Callers often give their reason as a statement or explanation rather than a direct "please tell Hussein X". Treat ANY of these as the message already given:
 - "I was just testing the call forwarding" → the test IS the message. Say: "Sounds like it's working! Is there anything else you'd like me to pass along, or was that it?"
 - "I just wanted to make sure this was set up correctly" → acknowledge and confirm.
 - "I was checking if Hussein got my email" → that IS the reason. Confirm and ask if there's anything else.
 - "I called earlier but no one answered" → that IS the context. Capture it.
-Never ask "What's the message?" after the caller has already explained why they called, even if they phrased it as context or a statement rather than a direct request. If in doubt, reflect back what you heard: "So you were [reason] — should I pass that along to Hussein?" rather than asking them to repeat themselves.
+Never ask "What's the message?" after the caller has already explained why they called, even if they phrased it as context or a statement rather than a direct request. If in doubt, reflect back what you heard once, folded into the close — not as a separate mid-call confirmation.
 
 URGENCY
 - If the caller signals urgency ("it's urgent", "ASAP", "really important", "emergency"): "Of course — I'll flag this as urgent so Hussein sees it right away. What's the message?"
@@ -280,7 +288,7 @@ WHAT TO COLLECT
 2. Reason for calling / message for Hussein.
 3. Callback number — only if they volunteer it (don't ask).
 
-Move naturally. If they give both name and reason quickly, go straight to the summary. Don't over-ask.
+Move naturally. If they give both name and reason quickly, go straight to the summary. Don't over-ask — once you have these, stop collecting and close.
 
 CLOSING — ONLY WHEN THE CALLER IS ACTUALLY DONE, AND KEEP IT SHORT
 - Simple message with nothing to verify → NO recap at all. Just: "Parfait, je lui transmets tout ça. Merci de votre appel!" / "Got it — I'll pass that along. Thanks for calling!"
@@ -468,6 +476,19 @@ export const COMMAND_FUNCTIONS = [
 // names, common contact names, etc. as needed — this is the main accent-accuracy lever.
 const STT_KEYTERMS = ['Hussein', 'Bayoun', 'Sky'];
 
+// Flux is Deepgram's STT model built specifically for voice agents, with model-integrated
+// end-of-turn detection (vs. nova-3, which exposes NO turn-detection tuning in the Agent
+// API at all — its internal default was cutting callers off mid-thought and triggering
+// "I didn't catch that" + a verbatim re-ask on nothing more than a brief thinking pause;
+// see tasks/lessons.md 2026-09-23 for the real-call evidence). Raised above Deepgram's
+// defaults (eot_threshold 0.7, eot_timeout_ms 5000) so a pause to think isn't mistaken
+// for "done talking" — the timeout is just the max fallback, not the typical turn time.
+const EOT_THRESHOLD = 0.8;
+const EOT_TIMEOUT_MS = 7000;
+// Montreal is bilingual — bias recognition toward both languages on every call regardless
+// of who's calling; Sky still replies in whichever language the LANGUAGE rules dictate.
+const DEFAULT_LANGUAGE_HINTS = ['en', 'fr'] as const;
+
 const baseSettings = {
   type: 'Settings' as const,
   audio: {
@@ -478,19 +499,41 @@ const baseSettings = {
     language: 'en' as const,
     // No greeting or context here — both are injected at call time by the builder functions
     // so they always reflect the current OOO state.
-    listen: { provider: { type: 'deepgram' as const, model: 'nova-3', keyterms: STT_KEYTERMS } },
+    listen: {
+      provider: {
+        type: 'deepgram' as const,
+        version: 'v2' as const,
+        model: 'flux-general-multi' as const,
+        language_hints: DEFAULT_LANGUAGE_HINTS,
+        keyterms: STT_KEYTERMS,
+        eot_threshold: EOT_THRESHOLD,
+        eot_timeout_ms: EOT_TIMEOUT_MS,
+      },
+    },
     speak: { provider: { type: 'deepgram' as const, model: 'aura-2-thalia-en' } },
   },
 };
 
-// Per-call listen config: boost the known caller's name on top of the static keyterms,
-// so a saved contact's name is recognized even through a heavy accent.
+// Per-call listen config: boost the known caller's name on top of the static keyterms
+// (recognized even through a heavy accent), and bias the language hint toward a known
+// contact's preferred language first.
 function buildListen(ctx?: CallerContext) {
   const name = ctx?.contact?.name?.trim();
   const keyterms = name && name.length > 1
     ? Array.from(new Set([...STT_KEYTERMS, ...name.split(/\s+/)]))
     : STT_KEYTERMS;
-  return { provider: { type: 'deepgram' as const, model: 'nova-3', keyterms } };
+  const languageHints = ctx?.contact?.language === 'fr' ? ['fr', 'en'] : DEFAULT_LANGUAGE_HINTS;
+  return {
+    provider: {
+      type: 'deepgram' as const,
+      version: 'v2' as const,
+      model: 'flux-general-multi' as const,
+      language_hints: languageHints,
+      keyterms,
+      eot_threshold: EOT_THRESHOLD,
+      eot_timeout_ms: EOT_TIMEOUT_MS,
+    },
+  };
 }
 
 export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
