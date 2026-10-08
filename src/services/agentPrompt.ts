@@ -501,9 +501,7 @@ const baseSettings = {
     input: { encoding: 'mulaw' as const, sample_rate: 8000 },
     output: { encoding: 'mulaw' as const, sample_rate: 8000, container: 'none' as const },
   },
-  agent: {
-    language: 'en' as const,
-    // No greeting or context here — both are injected at call time by the builder functions
+  agent: {    // No greeting or context here — both are injected at call time by the builder functions
     // so they always reflect the current OOO state.
     listen: {
       provider: {
@@ -550,9 +548,7 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,
-      language: lang,
-      listen: buildListen(ctx),
+      ...baseSettings.agent,      listen: buildListen(ctx),
       speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
       context: {
         messages: [
@@ -582,9 +578,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,
-      language: lang,
-      listen: buildListen(ctx),
+      ...baseSettings.agent,      listen: buildListen(ctx),
       speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
       context: {
         messages: [
@@ -617,9 +611,7 @@ export function buildCommandAgentSettings(_deepgramApiKey: string) {
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,
-      language: 'en' as const,
-      context: {
+      ...baseSettings.agent,      context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
         ],
@@ -637,9 +629,7 @@ export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, ant
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,
-      language: 'en' as const,
-      context: {
+      ...baseSettings.agent,      context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
         ],
