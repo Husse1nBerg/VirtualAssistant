@@ -5,10 +5,28 @@
 <!-- Add tasks with checkboxes. Include file paths, test commands, acceptance criteria. -->
 <!-- One task per turn. Keep it specific. -->
 
-- [ ] Test-call verification: confirm Flux STT change doesn't regress recognition quality
-      or French TTS, and that repeats/recaps have actually stopped in a real call.
+- [ ] Test-call verification (BLOCKER, user places call): confirm agent responds after the
+      greeting on main c9821b0 (Flux agent.language fix merged 2026-10-09), that Flux STT
+      doesn't regress recognition/French TTS, and that repeats/recaps have stopped.
+- [ ] Surface Deepgram agent `Error` events into the /health error counter (callOrchestrator
+      `handleAgentEvent` Error case only log.errors today) so a rejected Settings payload
+      alerts instead of hiding behind a green health check.
+
+- [ ] After the recording-prefetch fix is merged: confirm on the next 2–3 calls that the
+      MMS `dateSent` is within ~10s of `dateCreated` (Twilio console, or the diag approach
+      in lessons.md 2026-10-09). Render log line to look for: "Recording proxy: served audio"
+      with `cached: true`.
+- [ ] Prod sends a WhatsApp copy on every call and Twilio rejects it (error 63007: the
+      Twilio number is not a WhatsApp sender). Harmless but noisy — either unset
+      OWNER_WHATSAPP_NUMBER on Render or enable the WhatsApp sender. Owner's call.
 
 ## Completed
+
+### 2026-10-09 — Combined MMS arriving minutes late
+Twilio timestamps proved our pipeline creates the message 4–5s after hang-up; the delay was
+Twilio backing off after a slow first pull of the mp3 from our proxy. Fix: prefetch the mp3
+into memory in `/voice/recording-status` before `messages.create`; proxy serves from cache
+(`src/services/recordingCache.ts`, 2 tests). Typecheck clean, 17/17 tests.
 
 ### 2026-09-23 — Fix repeated questions, excess recaps, and STT-layer cutoffs
 **Trigger**: Real call recording (CallLog 1a191858) analyzed via Deepgram batch

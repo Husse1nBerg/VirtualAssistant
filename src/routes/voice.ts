@@ -9,6 +9,7 @@ import { getGreetingText, pickGreetingIndex, getTtsModel } from '../services/age
 import { getTwilioClient } from '../services/twilioClient';
 import { mintStreamToken } from '../utils/streamToken';
 import { isValidDashboardToken } from '../utils/auth';
+import { prefetchRecording, getCachedRecording, fetchRecordingMp3 } from '../services/recordingCache';
 
 const router = Router();
 
@@ -116,20 +117,13 @@ router.get('/recording/:callLogId', async (req: Request, res: Response) => {
     return res.status(404).send('Recording not found');
   }
 
-  const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
-  // Twilio's RecordingUrl has no extension — append .mp3 to get audio (bare URL returns XML metadata).
-  const mp3Url = callLog.recordingUrl!.replace(/\.(mp3|wav|ogg)$/, '') + '.mp3';
   try {
-    const twilioRes = await fetch(mp3Url, {
-      headers: { Authorization: `Basic ${auth}` },
-      redirect: 'follow',
-    });
-    if (!twilioRes.ok) {
-      log.warn({ callLogId, status: twilioRes.status, mp3Url }, 'Twilio recording fetch failed');
-      return res.status(502).send('Could not load recording');
-    }
-    const buffer = Buffer.from(await twilioRes.arrayBuffer());
-    log.info({ callLogId, bytes: buffer.length }, 'Recording proxy: served audio');
+    // Prefetched by /voice/recording-status so Twilio's MMS media pull is answered from
+    // memory instantly (a slow first pull made Twilio back off for minutes). Live fetch
+    // covers dashboard clicks after the cache entry expires.
+    const cached = getCachedRecording(callLogId);
+    const buffer = cached ?? (await fetchRecordingMp3(callLog.recordingUrl));
+    log.info({ callLogId, bytes: buffer.length, cached: !!cached }, 'Recording proxy: served audio');
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Length', buffer.length);
     res.send(buffer);
@@ -249,6 +243,16 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
     const callLog = await getCallLogBySid(callSid);
     if (callLog) {
       await updateCallLog(callLog.id, { recordingSid, recordingUrl });
+      // Ack Twilio now (15s webhook timeout); the prefetch below can take a few seconds
+      // on a fresh recording and nothing after this point needs the response.
+      res.sendStatus(200);
+
+      // Pull the mp3 into memory BEFORE creating the MMS so Twilio's media fetch from
+      // /voice/recording/:id is instant. If it fails, still send — the proxy falls back
+      // to a live fetch.
+      await prefetchRecording(callLog.id, recordingUrl).catch((err) =>
+        log.warn({ callSid, err }, 'Recording prefetch failed — proxy will fetch live')
+      );
 
       // Primary send path: recording is ready, so send ONE message with summary +
       // full transcript + recording. markSummarySent atomically claims the send so the
@@ -282,7 +286,7 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
     log.error({ callSid, err }, 'Failed to save recording URL to call log');
   }
 
-  res.sendStatus(200);
+  if (!res.headersSent) res.sendStatus(200);
 });
 
 /**
