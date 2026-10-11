@@ -34,8 +34,14 @@ services:
         sync: false
       - key: DASHBOARD_TOKEN
         sync: false
+      # deepgram (Aura-2) or elevenlabs. ElevenLabs needs the API key; the voice id
+      # defaults to Sky's chosen voice in agentPrompt.ts and can be overridden here.
       - key: TTS_PROVIDER
         value: deepgram
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        sync: false
       # Absolute path onto the mounted persistent disk. A relative file: URL is
       # resolved against the prisma/ schema folder (ephemeral!), which silently
       # wiped the DB on every deploy — contacts and call history were lost.

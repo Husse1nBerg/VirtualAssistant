@@ -5,7 +5,7 @@ import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendCombinedCallNotification, sendEscalationSMS } from '../services/notification';
-import { getGreetingText, pickGreetingIndex, getTtsModel } from '../services/agentPrompt';
+import { getGreetingText, pickGreetingIndex, getTtsModel, getElevenLabsVoiceId, ELEVENLABS_MODEL_ID } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
 import { mintStreamToken } from '../utils/streamToken';
 import { isValidDashboardToken } from '../utils/auth';
@@ -51,7 +51,8 @@ router.get('/greeting', async (req: Request, res: Response) => {
   const greetingIdx = gRaw !== undefined && /^\d+$/.test(gRaw) ? Number(gRaw) : undefined;
   const language = typeof req.query.lang === 'string' ? req.query.lang : 'en';
   const greetingText = buildGreetingText(callerName, isCommandMode, greetingIdx, language);
-  const ttsModel = getTtsModel(language);
+  const useElevenLabs = env.TTS_PROVIDER === 'elevenlabs';
+  const ttsModel = useElevenLabs ? `elevenlabs:${getElevenLabsVoiceId()}:${language}` : getTtsModel(language);
 
   // Cache key includes the model so the same words in different languages/voices don't collide.
   const cacheKey = `${ttsModel}::${greetingText}`;
@@ -62,24 +63,28 @@ router.get('/greeting', async (req: Request, res: Response) => {
   }
 
   try {
-    const dgRes = await fetch(
-      `https://api.deepgram.com/v1/speak?model=${ttsModel}&encoding=mp3`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text: greetingText }),
-      }
-    );
+    // Same voice as the agent: ElevenLabs when TTS_PROVIDER=elevenlabs, else Deepgram Aura.
+    const ttsRes = useElevenLabs
+      ? await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${getElevenLabsVoiceId()}?output_format=mp3_22050_32`,
+          {
+            method: 'POST',
+            headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: greetingText, model_id: ELEVENLABS_MODEL_ID, language_code: language }),
+          }
+        )
+      : await fetch(`https://api.deepgram.com/v1/speak?model=${ttsModel}&encoding=mp3`, {
+          method: 'POST',
+          headers: { Authorization: `Token ${env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: greetingText }),
+        });
 
-    if (!dgRes.ok) {
-      log.error({ status: dgRes.status }, 'Deepgram TTS failed for greeting');
+    if (!ttsRes.ok) {
+      log.error({ status: ttsRes.status, provider: env.TTS_PROVIDER }, 'TTS failed for greeting');
       return res.status(502).send('TTS unavailable');
     }
 
-    const buffer = Buffer.from(await dgRes.arrayBuffer());
+    const buffer = Buffer.from(await ttsRes.arrayBuffer());
     if (greetingCache.size >= GREETING_CACHE_MAX) {
       const oldest = greetingCache.keys().next().value;
       if (oldest !== undefined) greetingCache.delete(oldest);
