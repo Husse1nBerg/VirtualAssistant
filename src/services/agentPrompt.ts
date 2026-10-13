@@ -39,6 +39,31 @@ export function getTtsModel(language: string): string {
   return TTS_MODELS[language] ?? TTS_MODELS['en'];
 }
 
+// ElevenLabs (TTS_PROVIDER=elevenlabs): one multilingual voice speaks both English and
+// French, so a French contact gets the same voice as everyone else, just in French.
+// Flash v2.5 is the low-latency multilingual model — right for a phone call.
+export const ELEVENLABS_MODEL_ID = 'eleven_flash_v2_5';
+const DEFAULT_ELEVENLABS_VOICE_ID = 'eXpIbVcVbLo8ZJQDlDnl'; // Sky's chosen voice
+
+export function getElevenLabsVoiceId(): string {
+  return getEnv().ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_VOICE_ID;
+}
+
+/** Agent `speak` config for the active TTS provider (Deepgram Aura-2 or ElevenLabs). */
+function buildSpeak(language: string) {
+  const env = getEnv();
+  if (env.TTS_PROVIDER !== 'elevenlabs') {
+    return { provider: { type: 'deepgram' as const, model: getTtsModel(language) } };
+  }
+  return {
+    provider: { type: 'eleven_labs' as const, model_id: ELEVENLABS_MODEL_ID, language_code: language },
+    endpoint: {
+      url: `wss://api.elevenlabs.io/v1/text-to-speech/${getElevenLabsVoiceId()}/multi-stream-input`,
+      headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
+    },
+  };
+}
+
 function getGreetingTextForLanguage(language: string, name?: string, greetingIdx?: number): string {
   // Greet by first name only — "Hi Nadine!", never "Hi Nadine Bayoun!".
   const firstName = name?.trim().split(/\s+/)[0];
@@ -549,7 +574,7 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
     ...baseSettings,
     agent: {
       ...baseSettings.agent,      listen: buildListen(ctx),
-      speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
+      speak: buildSpeak(lang),
       context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: greeting },
@@ -579,7 +604,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
     ...baseSettings,
     agent: {
       ...baseSettings.agent,      listen: buildListen(ctx),
-      speak: { provider: { type: 'deepgram' as const, model: getTtsModel(lang) } },
+      speak: buildSpeak(lang),
       context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: greeting },
@@ -611,7 +636,8 @@ export function buildCommandAgentSettings(_deepgramApiKey: string) {
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,      context: {
+      ...baseSettings.agent,      speak: buildSpeak('en'),
+      context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
         ],
@@ -629,7 +655,8 @@ export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, ant
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,      context: {
+      ...baseSettings.agent,      speak: buildSpeak('en'),
+      context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
         ],
