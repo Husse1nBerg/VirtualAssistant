@@ -36,8 +36,10 @@ services:
         sync: false
       # deepgram (Aura-2) or elevenlabs. ElevenLabs needs the API key; the voice id
       # defaults to Sky's chosen voice in agentPrompt.ts and can be overridden here.
+      # sync: false — set in the Render dashboard. A fixed value here is re-applied on
+      # every Blueprint sync and silently overwrote the dashboard switch to elevenlabs.
       - key: TTS_PROVIDER
-        value: deepgram
+        sync: false
       - key: ELEVENLABS_API_KEY
         sync: false
       - key: ELEVENLABS_VOICE_ID
