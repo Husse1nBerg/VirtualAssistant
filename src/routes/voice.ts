@@ -64,7 +64,13 @@ router.get('/greeting', async (req: Request, res: Response) => {
 
   try {
     // Same voice as the agent: ElevenLabs when TTS_PROVIDER=elevenlabs, else Deepgram Aura.
-    const ttsRes = useElevenLabs
+    const deepgramTts = () =>
+      fetch(`https://api.deepgram.com/v1/speak?model=${getTtsModel(language)}&encoding=mp3`, {
+        method: 'POST',
+        headers: { Authorization: `Token ${env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: greetingText }),
+      });
+    let ttsRes = useElevenLabs
       ? await fetch(
           `https://api.elevenlabs.io/v1/text-to-speech/${getElevenLabsVoiceId()}?output_format=mp3_22050_32`,
           {
@@ -73,11 +79,15 @@ router.get('/greeting', async (req: Request, res: Response) => {
             body: JSON.stringify({ text: greetingText, model_id: ELEVENLABS_MODEL_ID, language_code: language }),
           }
         )
-      : await fetch(`https://api.deepgram.com/v1/speak?model=${ttsModel}&encoding=mp3`, {
-          method: 'POST',
-          headers: { Authorization: `Token ${env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: greetingText }),
-        });
+      : await deepgramTts();
+
+    if (!ttsRes.ok && useElevenLabs) {
+      // Don't leave the caller in silence: log WHY ElevenLabs refused (its JSON body names
+      // the cause — bad key, voice not in account, quota) and fall back to Deepgram.
+      const detail = (await ttsRes.text().catch(() => '')).slice(0, 300);
+      log.error({ status: ttsRes.status, detail }, 'ElevenLabs TTS failed for greeting — falling back to Deepgram');
+      ttsRes = await deepgramTts();
+    }
 
     if (!ttsRes.ok) {
       log.error({ status: ttsRes.status, provider: env.TTS_PROVIDER }, 'TTS failed for greeting');
