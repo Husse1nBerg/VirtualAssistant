@@ -70,6 +70,7 @@ router.get('/greeting', async (req: Request, res: Response) => {
         headers: { Authorization: `Token ${env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: greetingText }),
       });
+    let fellBack = false;
     let ttsRes = useElevenLabs
       ? await fetch(
           `https://api.elevenlabs.io/v1/text-to-speech/${getElevenLabsVoiceId()}?output_format=mp3_22050_32`,
@@ -87,6 +88,7 @@ router.get('/greeting', async (req: Request, res: Response) => {
       const detail = (await ttsRes.text().catch(() => '')).slice(0, 300);
       log.error({ status: ttsRes.status, detail }, 'ElevenLabs TTS failed for greeting — falling back to Deepgram');
       ttsRes = await deepgramTts();
+      fellBack = true;
     }
 
     if (!ttsRes.ok) {
@@ -95,11 +97,15 @@ router.get('/greeting', async (req: Request, res: Response) => {
     }
 
     const buffer = Buffer.from(await ttsRes.arrayBuffer());
-    if (greetingCache.size >= GREETING_CACHE_MAX) {
-      const oldest = greetingCache.keys().next().value;
-      if (oldest !== undefined) greetingCache.delete(oldest);
+    // A fallback clip is the wrong voice — don't pin it under the ElevenLabs cache key,
+    // or callers keep hearing Aura long after ElevenLabs recovers.
+    if (!fellBack) {
+      if (greetingCache.size >= GREETING_CACHE_MAX) {
+        const oldest = greetingCache.keys().next().value;
+        if (oldest !== undefined) greetingCache.delete(oldest);
+      }
+      greetingCache.set(cacheKey, buffer);
     }
-    greetingCache.set(cacheKey, buffer);
     log.info({ ooo: getEnv().OOO_ENABLED, callerName }, 'Greeting audio generated and cached');
     res.setHeader('Content-Type', 'audio/mpeg');
     res.send(buffer);
