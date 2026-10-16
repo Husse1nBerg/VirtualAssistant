@@ -41,8 +41,10 @@ export function getTtsModel(language: string): string {
 
 // ElevenLabs (TTS_PROVIDER=elevenlabs): one multilingual voice speaks both English and
 // French, so a French contact gets the same voice as everyone else, just in French.
-// Flash v2.5 is the low-latency multilingual model — right for a phone call.
-export const ELEVENLABS_MODEL_ID = 'eleven_flash_v2_5';
+// Turbo v2.5 is the multilingual model Deepgram's Voice Agent documents for its ElevenLabs
+// websocket bridge. Flash v2.5 (undocumented there) hallucinated spelled-out letters
+// ("g a, g g a") on a real call when Deepgram fed it a fragment of a sentence.
+export const ELEVENLABS_MODEL_ID = 'eleven_turbo_v2_5';
 const DEFAULT_ELEVENLABS_VOICE_ID = 'eXpIbVcVbLo8ZJQDlDnl'; // Sky's chosen voice
 
 export function getElevenLabsVoiceId(): string {

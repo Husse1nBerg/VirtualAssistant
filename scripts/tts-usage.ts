@@ -3,7 +3,7 @@
 // Run in the Render shell (prod DB):  npx tsx scripts/tts-usage.ts
 //
 // Assumptions (override via env if ElevenLabs changes them):
-//   ELEVEN_CREDITS_PER_CHAR  0.5   eleven_flash_v2_5 is billed at half a credit per character
+//   ELEVEN_CREDITS_PER_CHAR  0.5   eleven_turbo_v2_5 is billed at half a credit per character
 //   ELEVEN_USD_PER_1K_CREDITS 0.30 pay-as-you-go top-up rate on the free tier
 //   GREETING_CHARS            60   pre-connect greeting per call (cached per process, so upper bound)
 import 'dotenv/config';

@@ -16,11 +16,11 @@
       MMS `dateSent` is within ~10s of `dateCreated` (Twilio console, or the diag approach
       in lessons.md 2026-10-09). Render log line to look for: "Recording proxy: served audio"
       with `cached: true`.
-- [ ] ElevenLabs voice (eXpIbVcVbLo8ZJQDlDnl) wired behind TTS_PROVIDER=elevenlabs. NOT
-      verified live: local ELEVENLABS_API_KEY returns 401, so only the Deepgram Settings
-      schema was probed (PASS both modes). Owner sets ELEVENLABS_API_KEY + TTS_PROVIDER on
-      Render, then one test call (greeting + agent should be the same voice; French contact
-      should get the same voice in French). Rollback = TTS_PROVIDER=deepgram.
+- [ ] ElevenLabs live (Oct 16 call, CallLog 30befd86): voice fine, but TTS spoke gibberish
+      once (see lessons 2026-10-16). Switched to eleven_turbo_v2_5. Verify on the next call
+      that no spelled-out letters / restarted sentences occur. If it recurs, pull the Render
+      log around the call for ElevenLabs/Deepgram Error events and consider
+      eleven_multilingual_v2 (no language_code support — drop that field).
 - [ ] Prod sends a WhatsApp copy on every call and Twilio rejects it (error 63007: the
       Twilio number is not a WhatsApp sender). Harmless but noisy — either unset
       OWNER_WHATSAPP_NUMBER on Render or enable the WhatsApp sender. Owner's call.
