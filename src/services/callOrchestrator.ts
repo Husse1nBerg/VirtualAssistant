@@ -40,6 +40,10 @@ interface CallSession {
   summary: CallSummary | null;
   contact: Contact | null;  // resolved caller contact (for VIP urgency + context)
   isCommandMode?: boolean;  // true when owner called to give voice commands
+  // Barge-in gate: set when the caller talks over Sky, cleared when her next reply
+  // starts. Audio arriving in between belongs to the reply Deepgram just cancelled.
+  muteAgentAudio?: boolean;
+  droppedAudioBytes?: number;
 }
 
 // ── Active Sessions ──────────────────────────────────
@@ -255,7 +259,9 @@ export function handleAgentEvent(session: CallSession, event: any): void {
     // whatever audio we forwarded and would keep playing it over the caller. With
     // ElevenLabs the aborted reply arrives as clipped syllables ("g a, g g a"), so flush.
     case 'UserStartedSpeaking':
-      log.debug({ callId: session.callId }, 'Caller started speaking — clearing Twilio audio');
+      log.info({ callId: session.callId }, 'Caller started speaking — clearing Twilio audio');
+      session.muteAgentAudio = true;
+      session.droppedAudioBytes = 0;
       if (session.twilioWs.readyState === WebSocket.OPEN) {
         session.twilioWs.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
       }
@@ -327,7 +333,12 @@ export function handleAgentEvent(session: CallSession, event: any): void {
       break;
 
     case 'AgentStartedSpeaking':
-      log.debug({ callId: session.callId }, 'Agent started speaking');
+      log.info(
+        { callId: session.callId, droppedAudioBytes: session.droppedAudioBytes ?? 0 },
+        'Agent started speaking'
+      );
+      session.muteAgentAudio = false;
+      session.droppedAudioBytes = 0;
       break;
 
     case 'AgentAudioDone':
@@ -345,8 +356,12 @@ export function handleAgentEvent(session: CallSession, event: any): void {
 
 // ── Forward Audio: Deepgram Agent → Twilio ──────────
 
-function forwardAudioToTwilio(session: CallSession, audioData: Buffer): void {
+export function forwardAudioToTwilio(session: CallSession, audioData: Buffer): void {
   if (session.twilioWs.readyState !== WebSocket.OPEN) return;
+  if (session.muteAgentAudio) {
+    session.droppedAudioBytes = (session.droppedAudioBytes ?? 0) + audioData.length;
+    return;
+  }
 
   const payload = {
     event: 'media',
