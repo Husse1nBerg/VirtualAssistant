@@ -255,7 +255,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
     // whatever audio we forwarded and would keep playing it over the caller. With
     // ElevenLabs the aborted reply arrives as clipped syllables ("g a, g g a"), so flush.
     case 'UserStartedSpeaking':
-      log.debug({ callId: session.callId }, 'Caller started speaking — clearing Twilio audio');
+      log.info({ callId: session.callId }, 'Caller started speaking — clearing Twilio audio');
       if (session.twilioWs.readyState === WebSocket.OPEN) {
         session.twilioWs.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
       }
@@ -327,7 +327,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
       break;
 
     case 'AgentStartedSpeaking':
-      log.debug({ callId: session.callId }, 'Agent started speaking');
+      log.info({ callId: session.callId }, 'Agent started speaking');
       break;
 
     case 'AgentAudioDone':
