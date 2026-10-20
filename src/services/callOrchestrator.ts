@@ -345,7 +345,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
 
 // ── Forward Audio: Deepgram Agent → Twilio ──────────
 
-function forwardAudioToTwilio(session: CallSession, audioData: Buffer): void {
+export function forwardAudioToTwilio(session: CallSession, audioData: Buffer): void {
   if (session.twilioWs.readyState !== WebSocket.OPEN) return;
 
   const payload = {
