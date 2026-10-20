@@ -18,8 +18,7 @@
       with `cached: true`.
 - [ ] Barge-in fix (Twilio `clear` on UserStartedSpeaking, lessons 2026-10-18). On the next
       call, check the agent channel of the 2-channel recording: no agent audio should
-      overlap caller speech for more than ~0.3s, and no clipped syllables. Render log: every
-      "Agent started speaking" line carries droppedAudioBytes (non-zero = gate caught stragglers).
+      overlap caller speech for more than ~0.3s, and no clipped syllables.
 - [ ] Prod sends a WhatsApp copy on every call and Twilio rejects it (error 63007: the
       Twilio number is not a WhatsApp sender). Harmless but noisy — either unset
       OWNER_WHATSAPP_NUMBER on Render or enable the WhatsApp sender. Owner's call.
