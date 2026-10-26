@@ -276,7 +276,7 @@ export function maskPin(text: string): string {
   // "someone" is never read as "one".
   const digits = pin
     .split('')
-    .map((d) => `(?:${[d, ...words(d).map((w) => String.raw`\b${w}\b`)].join('|')})`)
+    .map((d) => `(?:${[d, ...words(d).map((w) => String.raw`(?<![a-z])${w}(?![a-z])`)].join('|')})`)
     .join(String.raw`[\s.,-]*`);
   return text.replace(new RegExp(String.raw`(?<!\d)` + digits + String.raw`(?!\d)`, 'gi'), '[PIN]');
 }

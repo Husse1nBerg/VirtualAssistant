@@ -59,6 +59,8 @@ describe('owner texts with a PIN set', () => {
     expect(maskPin('six, five, 4, three, two, one')).toBe('[PIN]');
     expect(maskPin('six five four three two two')).toBe('six five four three two two'); // a wrong PIN is not the secret
     expect(maskPin('PIN654321 please')).toBe('PIN[PIN] please'); // glued to letters: still masked
+    expect(maskPin('it is 6five4three21')).toBe('it is [PIN]'); // digits and words run together
+    expect(maskPin('someone sixty')).toBe('someone sixty'); // words inside other words are left alone
   });
 
   it('locks for an hour after 5 wrong PINs and texts Hussein once', async () => {
