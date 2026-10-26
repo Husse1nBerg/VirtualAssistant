@@ -272,8 +272,13 @@ export function maskPin(text: string): string {
   if (!pin) return text;
   // Each digit may be written as a digit or a word ("8" or "eight"), since STT spells PINs out.
   const words = (d: string) => Object.keys(DIGIT_WORDS).filter((w) => DIGIT_WORDS[w] === d);
-  const digits = pin.split('').map((d) => `(?:${[d, ...words(d)].join('|')})`).join(String.raw`[\s.,-]*`);
-  return text.replace(new RegExp(String.raw`(?<![\da-z])` + digits + String.raw`(?![\da-z])`, 'gi'), '[PIN]');
+  // Digits keep the digit-only guard ("PIN654321" is masked); words need word boundaries so
+  // "someone" is never read as "one".
+  const digits = pin
+    .split('')
+    .map((d) => `(?:${[d, ...words(d).map((w) => String.raw`\b${w}\b`)].join('|')})`)
+    .join(String.raw`[\s.,-]*`);
+  return text.replace(new RegExp(String.raw`(?<!\d)` + digits + String.raw`(?!\d)`, 'gi'), '[PIN]');
 }
 
 /** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */
