@@ -293,9 +293,12 @@ export function stopAgendaScheduler(): void {
 
 // ── Owner text commands ──────────────────────────────────────────────────────
 
-const lastTen = (n: string) => n.replace(/\D/g, '').slice(-10);
+// Exact full-number match, country code included (Twilio sends E.164; OWNER_PHONE_NUMBER is
+// validated to start with "+"). A suffix match would accept the same 10 digits from another country.
+const allDigits = (n: string) => n.replace(/\D/g, '');
 export function isOwnerNumber(from: string): boolean {
-  return lastTen(from).length === 10 && lastTen(from) === lastTen(getEnv().OWNER_PHONE_NUMBER);
+  const owner = allDigits(getEnv().OWNER_PHONE_NUMBER);
+  return owner.length >= 8 && allDigits(from) === owner;
 }
 
 export interface ParsedAdd {
