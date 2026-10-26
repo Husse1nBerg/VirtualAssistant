@@ -246,13 +246,19 @@ async function initializeSession(
 
 // ── Handle Deepgram Agent Events ─────────────────────
 
-function handleAgentEvent(session: CallSession, event: any): void {
+export function handleAgentEvent(session: CallSession, event: any): void {
   const log = getLogger();
 
   switch (event.type) {
     // User (caller) speech transcribed
+    // Barge-in: Deepgram has already aborted the agent's reply, but Twilio still holds
+    // whatever audio we forwarded and would keep playing it over the caller. With
+    // ElevenLabs the aborted reply arrives as clipped syllables ("g a, g g a"), so flush.
     case 'UserStartedSpeaking':
-      log.debug({ callId: session.callId }, 'Caller started speaking');
+      log.info({ callId: session.callId }, 'Caller started speaking — clearing Twilio audio');
+      if (session.twilioWs.readyState === WebSocket.OPEN) {
+        session.twilioWs.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
+      }
       break;
 
     case 'ConversationText': {
@@ -321,7 +327,7 @@ function handleAgentEvent(session: CallSession, event: any): void {
       break;
 
     case 'AgentStartedSpeaking':
-      log.debug({ callId: session.callId }, 'Agent started speaking');
+      log.info({ callId: session.callId }, 'Agent started speaking');
       break;
 
     case 'AgentAudioDone':

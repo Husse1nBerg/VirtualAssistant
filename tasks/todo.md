@@ -16,11 +16,9 @@
       MMS `dateSent` is within ~10s of `dateCreated` (Twilio console, or the diag approach
       in lessons.md 2026-10-09). Render log line to look for: "Recording proxy: served audio"
       with `cached: true`.
-- [ ] ElevenLabs live (Oct 16 call, CallLog 30befd86): voice fine, but TTS spoke gibberish
-      once (see lessons 2026-10-16). Switched to eleven_turbo_v2_5. Verify on the next call
-      that no spelled-out letters / restarted sentences occur. If it recurs, pull the Render
-      log around the call for ElevenLabs/Deepgram Error events and consider
-      eleven_multilingual_v2 (no language_code support — drop that field).
+- [ ] Barge-in fix (Twilio `clear` on UserStartedSpeaking, lessons 2026-10-18). On the next
+      call, check the agent channel of the 2-channel recording: no agent audio should
+      overlap caller speech for more than ~0.3s, and no clipped syllables.
 - [ ] Prod sends a WhatsApp copy on every call and Twilio rejects it (error 63007: the
       Twilio number is not a WhatsApp sender). Harmless but noisy — either unset
       OWNER_WHATSAPP_NUMBER on Render or enable the WhatsApp sender. Owner's call.
