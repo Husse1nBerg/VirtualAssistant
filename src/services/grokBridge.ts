@@ -240,10 +240,13 @@ function ownerPhrase(): string | null {
 
 /** Does what he said or typed match the PIN or passphrase? */
 function secretMatches(given: unknown): boolean {
+  // The whole answer must be the secret (after an optional "it's" / "my passphrase is"), so one
+  // answer is one guess: a run of guesses spoken together never matches.
+  const said = normalizePhrase(String(given ?? '').slice(0, 120))
+    .replace(/^(?:it s|it is|my (?:pin|passphrase|password) is|the (?:pin|passphrase|password) is)\s+/, '');
   const phrase = ownerPhrase();
-  if (phrase) return ` ${normalizePhrase(given)} `.includes(` ${phrase} `);
-  const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
-  return pinDigits(given) === pin;
+  if (phrase) return said === phrase;
+  return pinDigits(said) === getEnv().OWNER_PIN.replace(/\D/g, '');
 }
 
 /** A text that starts with the PIN or passphrase: returns it and the command after it. */

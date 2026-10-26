@@ -35,6 +35,7 @@ describe('passphrase instead of a numeric PIN', () => {
     expect(checkPin('blue falcon river', 'call')).toBe('ok');
     expect(checkPin('Blue, falcon... river!', 'call')).toBe('ok');
     expect(checkPin('my passphrase is blue falcon river', 'call')).toBe('ok');
+    expect(checkPin('red owl blue falcon river', 'call')).toBe('wrong'); // only the exact answer
     expect(checkPin('blue falcon', 'call')).toBe('wrong');
     expect(checkPin('blue falcon rivers', 'call')).toBe('wrong');
   });
@@ -59,6 +60,7 @@ describe('owner call: the passphrase is verified from his own words', () => {
   it('unlocks the call when he says it, whatever the AI later passes on', async () => {
     const { handleAgentEvent } = await import('../src/services/callOrchestrator');
     const s = session();
+    s.awaitingPin = true; // Sky has just asked for it
     handleAgentEvent(s, { type: 'ConversationText', role: 'user', content: 'Blue falcon river.' });
     expect(s.pinOk).toBe(true);
     expect(s.transcriptParts[0].content).toBe('[PIN].');
@@ -67,8 +69,20 @@ describe('owner call: the passphrase is verified from his own words', () => {
   it('does not unlock on a wrong phrase, or on the AI saying it', async () => {
     const { handleAgentEvent } = await import('../src/services/callOrchestrator');
     const s = session();
+    s.awaitingPin = true;
     handleAgentEvent(s, { type: 'ConversationText', role: 'user', content: 'blue falcon' });
     handleAgentEvent(s, { type: 'ConversationText', role: 'assistant', content: 'blue falcon river' });
+    expect(s.pinOk).toBeUndefined();
+    expect(s.pinTries).toBe(1); // the wrong answer was counted
+  });
+
+  it('never unlocks from a run of guesses, or when Sky has not asked', async () => {
+    const { handleAgentEvent } = await import('../src/services/callOrchestrator');
+    const s = session();
+    handleAgentEvent(s, { type: 'ConversationText', role: 'user', content: 'Blue falcon river' }); // not asked yet
+    expect(s.pinOk).toBeUndefined();
+    s.awaitingPin = true;
+    handleAgentEvent(s, { type: 'ConversationText', role: 'user', content: 'red owl lake blue falcon river green fox' });
     expect(s.pinOk).toBeUndefined();
   });
 });
