@@ -87,3 +87,25 @@ model Contact {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+// A command Hussein gave Sky that was relayed to one of his Grok bots, and the bot's answer.
+model BotRequest {
+  id        String    @id @default(uuid())
+  botName   String
+  command   String
+  channel   String    // "call" | "sms"
+  status    String    @default("sent") // sent | done | failed
+  reply     String?
+  createdAt DateTime  @default(now())
+  repliedAt DateTime?
+
+  @@index([status, createdAt])
+}
+
+// Today's schedule as last reported by a Grok bot (single row, id "today"), so Sky can
+// answer "what's my afternoon look like?" instantly on a call or by text.
+model DaySnapshot {
+  id        String   @id
+  text      String
+  updatedAt DateTime @updatedAt
+}

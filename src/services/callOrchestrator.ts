@@ -23,6 +23,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
+import { relayToBot, describeSchedule, onLiveOwnerCall, BridgeError } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ interface CallSession {
   summary: CallSummary | null;
   contact: Contact | null;  // resolved caller contact (for VIP urgency + context)
   isCommandMode?: boolean;  // true when owner called to give voice commands
+  pinOk?: boolean;          // owner gave the right PIN on this call (Grok bot relays)
 }
 
 // ── Active Sessions ──────────────────────────────────
@@ -311,6 +313,14 @@ export function handleAgentEvent(session: CallSession, event: any): void {
           handleTransferRequest(session, input, functionCallId, clientSide).catch((err) =>
             log.error({ callId: session.callId, err }, 'Transfer request failed')
           );
+        } else if (functionName === 'relay_to_bot' && session.isCommandMode) {
+          handleRelayToBot(session, input, functionCallId, clientSide).catch((err) =>
+            log.error({ callId: session.callId, err }, 'Relay to bot failed')
+          );
+        } else if (functionName === 'get_today_schedule' && session.isCommandMode) {
+          describeSchedule()
+            .then((t) => sendFunctionResponse(session, functionCallId, clientSide, t))
+            .catch((err) => log.error({ callId: session.callId, err }, 'Schedule lookup failed'));
         } else if (functionName === 'send_sms') {
           handleSendSmsCommand(session, input, functionCallId, clientSide).catch((err) =>
             log.error({ callId: session.callId, err }, 'Send SMS command failed')
@@ -447,6 +457,48 @@ async function handleSendSmsCommand(
     sendFunctionResponse(session, functionCallId, clientSide, "Sorry, the text didn't go through. Try again or send it yourself.");
   }
 }
+
+async function handleRelayToBot(
+  session: CallSession,
+  input: Record<string, unknown>,
+  functionCallId: string,
+  clientSide: boolean
+): Promise<void> {
+  const pin = getEnv().OWNER_PIN;
+  // Checked here, not by the AI: caller ID can be spoofed, and the AI can be talked out of a rule.
+  if (pin && !session.pinOk) {
+    const given = String(input.pin ?? '').replace(/\D/g, '');
+    if (given !== pin.replace(/\D/g, '')) {
+      sendFunctionResponse(session, functionCallId, clientSide, 'The PIN did not match, so nothing was sent. Ask for the PIN.');
+      return;
+    }
+    session.pinOk = true;
+  }
+  const command = String(input.command ?? '').trim();
+  if (!command) {
+    sendFunctionResponse(session, functionCallId, clientSide, 'What should I send?');
+    return;
+  }
+  const botName = String(input.bot_name ?? '').trim() || undefined;
+  try {
+    const { bot } = await relayToBot(botName, command, 'call');
+    sendFunctionResponse(session, functionCallId, clientSide, `Sent to ${bot.name}. Tell him you'll let him know when it answers.`);
+  } catch (err) {
+    const msg = err instanceof BridgeError ? err.message : "Sorry, I couldn't send that.";
+    sendFunctionResponse(session, functionCallId, clientSide, msg);
+  }
+}
+
+// A bot's answer arriving while Hussein is on a command call is said aloud, not just texted.
+onLiveOwnerCall((text) => {
+  for (const s of sessions.values()) {
+    if (s.isCommandMode && !s.ended && s.agentWs?.readyState === WebSocket.OPEN) {
+      s.agentWs.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
+      return true;
+    }
+  }
+  return false;
+});
 
 function sendFunctionResponse(
   session: CallSession,

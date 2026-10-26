@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// An empty dashboard value means "not set": fall back to the default.
+const blankToUndef = (v: unknown) => (v === '' ? undefined : v);
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -42,6 +45,17 @@ const envSchema = z.object({
 
   // Data retention (delete call logs older than N days; 0 = disabled)
   DATA_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
+
+  // Grok Bot link. Sky starts a bot's routine through its webhook; the bot answers through
+  // Sky's connector (POST /connector/mcp, Bearer BOT_CONNECTOR_SECRET).
+  // GROK_BOTS is JSON, one entry per bot, copied from each routine's Webhook section:
+  //   {"grok bot": {"url": "https://...", "key": "crsr_..."}, "planner": {"url": "...", "key": "..."}}
+  // Names match case-insensitively; GROK_DEFAULT_BOT gets commands that name no bot.
+  GROK_BOTS: z.preprocess(blankToUndef, z.string().default('{}')),
+  GROK_DEFAULT_BOT: z.preprocess(blankToUndef, z.string().default('grok bot')),
+  BOT_CONNECTOR_SECRET: z.string().default(''), // empty = connector disabled
+  OWNER_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
+  OWNER_PIN: z.string().default(''), // spoken before Sky relays a command from a call (caller ID can be spoofed)
 
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),

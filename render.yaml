@@ -44,6 +44,17 @@ services:
         sync: false
       - key: ELEVENLABS_VOICE_ID
         sync: false
+      # Grok Bot link (all sync: false; set in the dashboard).
+      - key: GROK_BOTS
+        sync: false
+      - key: GROK_DEFAULT_BOT
+        sync: false
+      - key: BOT_CONNECTOR_SECRET
+        sync: false
+      - key: OWNER_PIN
+        sync: false
+      - key: OWNER_TIMEZONE
+        sync: false
       # Absolute path onto the mounted persistent disk. A relative file: URL is
       # resolved against the prisma/ schema folder (ephemeral!), which silently
       # wiped the DB on every deploy — contacts and call history were lost.
