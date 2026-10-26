@@ -23,7 +23,7 @@ beforeAll(async () => {
       'grok bot': { url: 'https://hooks.example/grok', key: 'crsr_main' },
       planner: { url: 'https://hooks.example/planner', key: 'crsr_plan' },
     }),
-    BOT_CONNECTOR_SECRET: 'connector-secret-123',
+    BOT_CONNECTOR_SECRET: 'connector-secret-0123456789abcdef0123456789',
   });
   (await import('../src/config/env')).loadEnv();
   (await import('../src/utils/logger')).initLogger('fatal');
@@ -118,7 +118,7 @@ describe('Sky connector (what Grok Bot plugs into)', () => {
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
     const client = new Client({ name: 'grok-bot-test', version: '1.0.0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(base), {
-      requestInit: { headers: { Authorization: 'Bearer connector-secret-123' } },
+      requestInit: { headers: { Authorization: 'Bearer connector-secret-0123456789abcdef0123456789' } },
     }));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['get_pending_requests', 'reply_to_hussein', 'set_today_schedule', 'text_hussein']);

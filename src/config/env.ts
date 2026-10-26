@@ -5,7 +5,8 @@ const blankToUndef = (v: unknown) => (v === '' ? undefined : v);
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Defaults to production so Twilio signature checks are never skipped by omission.
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
   BASE_URL: z.string().url(),
 
   // Twilio
@@ -53,9 +54,11 @@ const envSchema = z.object({
   // Names match case-insensitively; GROK_DEFAULT_BOT gets commands that name no bot.
   GROK_BOTS: z.preprocess(blankToUndef, z.string().default('{}')),
   GROK_DEFAULT_BOT: z.preprocess(blankToUndef, z.string().default('grok bot')),
-  BOT_CONNECTOR_SECRET: z.string().default(''), // empty = connector disabled
+  BOT_CONNECTOR_SECRET: z.string().default('').refine((v) => v === '' || v.length >= 32, 'BOT_CONNECTOR_SECRET must be at least 32 characters'), // empty = connector disabled
   OWNER_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
-  OWNER_PIN: z.string().default(''), // spoken before Sky relays a command from a call (caller ID can be spoofed)
+  // Second factor for owner powers (bots, schedule, texting contacts): caller ID and SMS sender
+  // can be spoofed. Empty = those features stay off. 6-8 digits so 5 guesses an hour can't find it.
+  OWNER_PIN: z.string().default('').refine((v) => v === '' || /^\d{6,8}$/.test(v), 'OWNER_PIN must be 6 to 8 digits'),
 
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),

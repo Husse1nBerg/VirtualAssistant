@@ -26,7 +26,7 @@ import { sendPostSmsNotifications } from './notification';
 import type { CallSummary } from './claude';
 import { v4 as uuidv4 } from 'uuid';
 import { buildCallerContextBlock } from './agentPrompt';
-import { isOwnerNumber, handleOwnerText } from './grokBridge';
+import { isOwnerNumber, handleOwnerText, maskPin } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -132,6 +132,7 @@ export async function handleIncomingSms(
   if (isOwnerNumber(fromNumber)) {
     const reply = await handleOwnerText(body);
     if (reply) return reply;
+    body = maskPin(body); // not a bridge command: keep any PIN out of the saved transcript
   }
 
   // Check if this texter already has a session
