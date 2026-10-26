@@ -58,7 +58,10 @@ const envSchema = z.object({
   OWNER_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
   // Second factor for owner powers (bots, schedule, texting contacts): caller ID and SMS sender
   // can be spoofed. Empty = those features stay off. 6-8 digits so 5 guesses an hour can't find it.
-  OWNER_PIN: z.string().default('').refine((v) => v === '' || /^\d{6,8}$/.test(v), 'OWNER_PIN must be 6 to 8 digits'),
+  OWNER_PIN: z.string().default('').refine(
+    (v) => v === '' || /^\d{6,8}$/.test(v) || (v.trim().split(/\s+/).length >= 2 && v.replace(/[^a-z]/gi, '').length >= 8),
+    'OWNER_PIN must be 6 to 8 digits, or a passphrase of at least two words (8+ letters)',
+  ),
 
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),

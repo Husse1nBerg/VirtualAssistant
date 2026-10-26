@@ -25,7 +25,7 @@ function normalizePhoneForCompare(raw: string): string {
 
 function buildGreetingText(callerName?: string, isCommandMode?: boolean, greetingIdx?: number, language?: string): string {
   if (isCommandMode) {
-    return "Voice commands. What would you like me to do? You can say things like: text John I'll be late, or remind me to call Sarah tomorrow.";
+    return 'Hi Hussein, what can I do for you?';
   }
   if (callerName) {
     const firstName = callerName.trim().split(/\s+/)[0];

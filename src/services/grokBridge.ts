@@ -230,6 +230,35 @@ const pinFailures: Record<PinChannel, number[]> = { call: [], sms: [] };
 
 export type PinResult = 'ok' | 'wrong' | 'locked' | 'not-set';
 
+const normalizePhrase = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** The owner's passphrase, normalised, when OWNER_PIN is words rather than 6-8 digits. */
+function ownerPhrase(): string | null {
+  const v = getEnv().OWNER_PIN.trim();
+  return v && !/^\d{6,8}$/.test(v) ? normalizePhrase(v) : null;
+}
+
+/** Does what he said or typed match the PIN or passphrase? */
+function secretMatches(given: unknown): boolean {
+  const phrase = ownerPhrase();
+  if (phrase) return ` ${normalizePhrase(given)} `.includes(` ${phrase} `);
+  const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
+  return pinDigits(given) === pin;
+}
+
+/** A text that starts with the PIN or passphrase: returns it and the command after it. */
+function splitLeadingSecret(body: string): { secret: string; rest: string } | null {
+  const phrase = ownerPhrase();
+  if (!phrase) {
+    const m = body.trim().match(/^(\d{4,8})\s+(.+)$/s);
+    return m ? { secret: m[1], rest: m[2] } : null;
+  }
+  const words = body.trim().split(/\s+/);
+  const n = phrase.split(' ').length;
+  if (words.length <= n || normalizePhrase(words.slice(0, n).join(' ')) !== phrase) return null;
+  return { secret: words.slice(0, n).join(' '), rest: words.slice(n).join(' ') };
+}
+
 const DIGIT_WORDS: Record<string, string> = {
   zero: '0', oh: '0', one: '1', two: '2', three: '3', four: '4',
   five: '5', six: '6', seven: '7', eight: '8', nine: '9',
@@ -246,11 +275,10 @@ export function pinDigits(given: unknown): string {
 /** 5 wrong PINs in an hour on one channel lock that channel for the hour and alert Hussein.
  *  Separate channels, so spoofed texts can't lock him out of calls (or the reverse). */
 export function checkPin(given: unknown, channel: PinChannel, now = Date.now()): PinResult {
-  const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
-  if (!pin) return 'not-set';
+  if (!getEnv().OWNER_PIN) return 'not-set';
   const fails = (pinFailures[channel] = pinFailures[channel].filter((t) => now - t < PIN_LOCK_WINDOW_MS));
   if (fails.length >= PIN_LOCK_FAILURES) return 'locked';
-  if (pinDigits(given) === pin) return 'ok';
+  if (secretMatches(given)) return 'ok';
   fails.push(now);
   if (fails.length === PIN_LOCK_FAILURES) {
     getLogger().warn({ channel }, 'Grok bridge: PIN locked after repeated wrong attempts');
@@ -268,6 +296,11 @@ export function resetPinFailuresForTests(): void {
 /** Hide the owner's PIN in logs and saved transcripts, however it was spaced or dashed,
  *  but never inside a longer number. */
 export function maskPin(text: string): string {
+  const phrase = ownerPhrase();
+  if (phrase) {
+    const words = phrase.split(' ').join(String.raw`[^a-z0-9]+`);
+    return text.replace(new RegExp(String.raw`(?<![a-z0-9])` + words + String.raw`(?![a-z0-9])`, 'gi'), '[PIN]');
+  }
   const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
   if (!pin) return text;
   // Each digit may be written as a digit or a word ("8" or "eight"), since STT spells PINs out.
@@ -284,13 +317,13 @@ export function maskPin(text: string): string {
 /** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */
 export async function handleOwnerText(rawBody: string): Promise<string | null> {
   // Bridge texts start with the PIN: "123456 tell planner to move gym to 7".
-  const lead = rawBody.trim().match(/^(\d{4,8})\s+(.+)$/s);
-  const parsed = parseOwnerText(lead ? lead[2] : rawBody, [...botDirectory().keys()]);
+  const lead = splitLeadingSecret(rawBody);
+  const parsed = parseOwnerText(lead ? lead.rest : rawBody, [...botDirectory().keys()]);
   if (!parsed) return null;
-  const result = checkPin(lead?.[1], 'sms');
+  const result = checkPin(lead?.secret, 'sms');
   if (result === 'not-set') return 'Bot commands are off until a PIN is set on Sky.';
   if (result === 'locked') return 'Bot commands by text are locked for an hour after repeated wrong PINs.';
-  if (result !== 'ok') return 'Start bot commands with your PIN, like: 123456 tell planner to move gym to 7.';
+  if (result !== 'ok') return 'Start bot commands with your PIN or passphrase, then the command.';
   if (parsed.kind === 'schedule') return describeSchedule();
   try {
     const { bot } = await relayToBot(parsed.bot, parsed.command, 'sms');
