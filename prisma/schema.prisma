@@ -87,3 +87,14 @@ model Contact {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+// Items Hussein adds to his agenda by texting Sky ("add dentist Thursday 3pm").
+model AgendaItem {
+  id        String   @id @default(uuid())
+  title     String
+  startsAt  DateTime // all-day items: local midnight in AGENDA_TIMEZONE, stored as UTC
+  allDay    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([startsAt])
+}

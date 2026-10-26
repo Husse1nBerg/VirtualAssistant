@@ -23,6 +23,12 @@
       Twilio number is not a WhatsApp sender). Harmless but noisy — either unset
       OWNER_WHATSAPP_NUMBER on Render or enable the WhatsApp sender. Owner's call.
 
+- [ ] Daily agenda text (feat/daily-agenda). Owner sets on Render: AGENDA_ENABLED=true,
+      WORK_CALENDAR_ICS_URL, GOOGLE_CALENDAR_ICS_URL, XAI_API_KEY (console.x.ai, separate from
+      the Grok app subscription). Check /health "agenda" block, then text Sky "agenda" to see
+      the merged list. First 7:00 text the next morning; Render log line "Daily agenda sent"
+      shows which writer (grok / claude / plain) produced it.
+
 ## Completed
 
 ### 2026-10-09 — Combined MMS arriving minutes late

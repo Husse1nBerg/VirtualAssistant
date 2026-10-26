@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// An empty dashboard value means "not set": fall back to the default instead of
+// coercing "" (an empty hour would otherwise become 0 = midnight).
+const blankToUndef = (v: unknown) => (v === '' ? undefined : v);
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -42,6 +46,17 @@ const envSchema = z.object({
 
   // Data retention (delete call logs older than N days; 0 = disabled)
   DATA_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
+
+  // Daily agenda text (off until enabled on Render). Calendar links are private iCal
+  // ("secret address") URLs; leave empty to skip a source.
+  AGENDA_ENABLED: z.preprocess(blankToUndef, z.enum(['true', 'false']).default('false')).transform((v) => v === 'true'),
+  AGENDA_HOUR: z.preprocess(blankToUndef, z.coerce.number().int().min(0).max(23).default(7)),
+  AGENDA_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
+  WORK_CALENDAR_ICS_URL: z.string().default(''),
+  GOOGLE_CALENDAR_ICS_URL: z.string().default(''),
+  // xAI (Grok) writes the morning brief; Claude, then a plain list, are the fallbacks.
+  XAI_API_KEY: z.string().default(''),
+  XAI_MODEL: z.preprocess(blankToUndef, z.string().default('grok-3-mini')),
 
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),

@@ -65,3 +65,9 @@
 **Root cause**: Commit 104bd99 (#9) dropped all agent audio from `UserStartedSpeaking` until `AgentStartedSpeaking`. I shipped it assuming `AgentStartedSpeaking` arrives before each reply's audio; Deepgram's docs never state that, I knew it, and shipped anyway. On this call the gate never reopened, so every reply was discarded. Tests passed because they encoded my assumption, not Deepgram's behavior.
 **Rule**: Never gate or drop the agent's audio on an event whose ordering isn't documented or observed in a real call log. Anything that can silence the agent needs live evidence first, and must fail open: a missed event must never mean permanent silence.
 **Example**: Reverted #9. `UserStartedSpeaking` and `AgentStartedSpeaking` now log at info, so the next call's Render log shows the real event order before any further barge-in change.
+
+## [2026-10-26] A time-zone test passed on my machine for the wrong reason
+**What happened**: The daily-agenda tests passed with the time-zone handling removed. This laptop runs on Eastern time, the same zone as the test calendar, so wrong code produced the right answers here and would have been an hour off on Render (UTC).
+**Root cause**: A control that only removes code can't fail when the environment already supplies the missing behavior. The real proof was removing the calendar's VTIMEZONE block under TZ=UTC, which made the two time-sensitive tests fail.
+**Rule**: Run time-zone tests with TZ=UTC (Render's zone) as well as locally, and prove sensitivity by breaking the input, not just the code path.
+**Example**: `TZ=UTC npx vitest run tests/agenda.test.ts`. ical.js resolves TZIDs from the file's own VTIMEZONE, so no global registration is needed.

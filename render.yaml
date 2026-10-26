@@ -44,6 +44,22 @@ services:
         sync: false
       - key: ELEVENLABS_VOICE_ID
         sync: false
+      # Daily agenda text. All sync: false so the dashboard values are never overwritten.
+      # AGENDA_ENABLED=true turns it on; hour and timezone default to 7 and America/Toronto.
+      - key: AGENDA_ENABLED
+        sync: false
+      - key: AGENDA_HOUR
+        sync: false
+      - key: AGENDA_TIMEZONE
+        sync: false
+      - key: WORK_CALENDAR_ICS_URL
+        sync: false
+      - key: GOOGLE_CALENDAR_ICS_URL
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: XAI_MODEL
+        sync: false
       # Absolute path onto the mounted persistent disk. A relative file: URL is
       # resolved against the prisma/ schema folder (ephemeral!), which silently
       # wiped the DB on every deploy — contacts and call history were lost.

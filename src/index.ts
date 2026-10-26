@@ -16,6 +16,7 @@ import { handleMediaStreamConnection } from './services/callOrchestrator';
 import { getPrisma, disconnectDb } from './services/database';
 import { startRetentionScheduler, stopRetentionScheduler } from './services/retention';
 import { startHealthMonitor } from './services/healthAlert';
+import { startAgendaScheduler, stopAgendaScheduler } from './services/agenda';
 
 // ── Bootstrap ────────────────────────────────────────
 
@@ -35,6 +36,9 @@ async function main() {
 
   // Start data retention scheduler (no-op if DATA_RETENTION_DAYS=0)
   startRetentionScheduler();
+
+  // Daily agenda text (no-op unless AGENDA_ENABLED=true)
+  startAgendaScheduler();
 
   // ── Express App ──────────────────────────────────
 
@@ -119,6 +123,7 @@ async function main() {
 
     // Stop retention scheduler
     stopRetentionScheduler();
+    stopAgendaScheduler();
 
     // Disconnect DB
     await disconnectDb();

@@ -26,6 +26,7 @@ import { sendPostSmsNotifications } from './notification';
 import type { CallSummary } from './claude';
 import { v4 as uuidv4 } from 'uuid';
 import { buildCallerContextBlock } from './agentPrompt';
+import { isOwnerNumber, handleOwnerAgendaCommand } from './agenda';
 
 // ── Types ────────────────────────────────────────────
 
@@ -125,6 +126,13 @@ export async function handleIncomingSms(
   const log = getLogger();
   const env = getEnv();
   pruneExpiredSessions();
+
+  // Hussein texting his own assistant: agenda commands ("add …", "agenda", "remove …").
+  // Anything else from him falls through to the normal message-taking flow, as before.
+  if (isOwnerNumber(fromNumber)) {
+    const reply = await handleOwnerAgendaCommand(body);
+    if (reply) return reply;
+  }
 
   // Check if this texter already has a session
   let session = sessions.get(fromNumber);
