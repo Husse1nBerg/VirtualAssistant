@@ -267,7 +267,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
     case 'ConversationText': {
       // Both user and agent transcript turns
       const role = event.role; // "user" or "assistant"
-      const content = event.content || '';
+      const content = maskPin(event.content || '');
 
       if (content) {
         log.info({ callId: session.callId, role, content }, 'Conversation turn');
@@ -306,7 +306,8 @@ export function handleAgentEvent(session: CallSession, event: any): void {
             : (fn.arguments as Record<string, unknown>) ?? {};
         } catch { /* leave input as {} */ }
 
-        log.info({ callId: session.callId, functionName, functionCallId, clientSide, input }, 'Agent function call');
+        const { pin: _pin, ...loggable } = input;
+        log.info({ callId: session.callId, functionName, functionCallId, clientSide, input: loggable, pinProvided: _pin != null }, 'Agent function call');
 
         if (functionName === 'end_call_summary') {
           handleEndCallSummary(session, input, functionCallId, clientSide);
@@ -488,6 +489,13 @@ async function handleRelayToBot(
 }
 
 const PIN_TRIES_PER_CALL = 3;
+
+/** Hide the owner's PIN in logs and saved transcripts, however STT spaced or dashed the digits. */
+export function maskPin(text: string): string {
+  const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
+  if (!pin) return text;
+  return text.replace(new RegExp(pin.split('').join('[\s.,-]*'), 'g'), '[PIN]');
+}
 
 /** null when the bot features may run on this call; otherwise what Sky should say. Checked here,
  *  not by the AI: caller ID can be spoofed, and the AI can be talked out of a rule. */

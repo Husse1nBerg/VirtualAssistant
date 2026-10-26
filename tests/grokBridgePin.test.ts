@@ -48,6 +48,14 @@ describe('owner texts with a PIN set', () => {
     expect(await handleOwnerText('hey, call me back')).toBeNull();
   });
 
+  it('masks the PIN in transcripts however the digits were written', async () => {
+    const { maskPin } = await import('../src/services/callOrchestrator');
+    expect(maskPin('my pin is 4321')).toBe('my pin is [PIN]');
+    expect(maskPin('It is 4 3 2 1.')).toBe('It is [PIN].');
+    expect(maskPin('4-3-2-1, move gym')).toBe('[PIN], move gym');
+    expect(maskPin('meeting at 4:30')).toBe('meeting at 4:30');
+  });
+
   it('locks for an hour after 5 wrong PINs and texts Hussein once', async () => {
     const { checkPin } = await import('../src/services/grokBridge');
     const t0 = Date.now();
