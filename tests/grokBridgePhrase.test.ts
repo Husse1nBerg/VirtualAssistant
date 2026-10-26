@@ -86,3 +86,11 @@ describe('owner call: the passphrase is verified from his own words', () => {
     expect(s.pinOk).toBeUndefined();
   });
 });
+
+describe('schedule read aloud', () => {
+  it('falls back to short sentences when Claude is unavailable', async () => {
+    const { spokenSchedule } = await import('../src/services/grokBridge');
+    expect(await spokenSchedule('6:00 PM - 7:00 PM: Sofia\n7:45 PM - 8:30 PM: Sammy'))
+      .toBe('6:00 PM to 7:00 PM: Sofia. 7:45 PM to 8:30 PM: Sammy.');
+  });
+});
