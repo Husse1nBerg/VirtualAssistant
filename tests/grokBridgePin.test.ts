@@ -67,6 +67,15 @@ describe('owner texts with a PIN set', () => {
     expect(checkPin('654321', 'sms', t0 + 61 * 60_000)).toBe('ok'); // lock expires
   });
 
+  it('accepts a spoken PIN given as words, digits or a mix', async () => {
+    const { checkPin, pinDigits } = await import('../src/services/grokBridge');
+    expect(pinDigits('six five four three two one')).toBe('654321');
+    expect(pinDigits('Six, five, 4-3, two one.')).toBe('654321');
+    expect(pinDigits('my pin is six five four three two one')).toBe('654321'); // other words ignored
+    expect(checkPin('six five four three two one', 'call')).toBe('ok');
+    expect(checkPin('six five four three two two', 'call')).toBe('wrong');
+  });
+
   it('keeps calls usable while spoofed texts are locked out', async () => {
     const { checkPin } = await import('../src/services/grokBridge');
     const t0 = Date.now();
