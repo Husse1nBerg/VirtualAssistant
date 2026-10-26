@@ -55,6 +55,9 @@ describe('owner texts with a PIN set', () => {
     expect(maskPin('6-5-4-3-2-1, move gym')).toBe('[PIN], move gym');
     expect(maskPin('meeting at 4:30')).toBe('meeting at 4:30');
     expect(maskPin('order 96543210 shipped')).toBe('order 96543210 shipped'); // not inside a longer number
+    expect(maskPin('Caller: Six five four three two one.')).toBe('Caller: [PIN].'); // spelled out by STT
+    expect(maskPin('six, five, 4, three, two, one')).toBe('[PIN]');
+    expect(maskPin('six five four three two two')).toBe('six five four three two two'); // a wrong PIN is not the secret
   });
 
   it('locks for an hour after 5 wrong PINs and texts Hussein once', async () => {
