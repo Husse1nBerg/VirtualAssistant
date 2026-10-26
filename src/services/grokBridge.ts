@@ -230,6 +230,19 @@ const pinFailures: Record<PinChannel, number[]> = { call: [], sms: [] };
 
 export type PinResult = 'ok' | 'wrong' | 'locked' | 'not-set';
 
+const DIGIT_WORDS: Record<string, string> = {
+  zero: '0', oh: '0', one: '1', two: '2', three: '3', four: '4',
+  five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+};
+
+/** A spoken PIN can reach us as words ("four eight two nine one three"), digits, or a mix. */
+export function pinDigits(given: unknown): string {
+  return String(given ?? '')
+    .toLowerCase()
+    .replace(/[a-z]+/g, (w) => DIGIT_WORDS[w] ?? ' ')
+    .replace(/\D/g, '');
+}
+
 /** 5 wrong PINs in an hour on one channel lock that channel for the hour and alert Hussein.
  *  Separate channels, so spoofed texts can't lock him out of calls (or the reverse). */
 export function checkPin(given: unknown, channel: PinChannel, now = Date.now()): PinResult {
@@ -237,7 +250,7 @@ export function checkPin(given: unknown, channel: PinChannel, now = Date.now()):
   if (!pin) return 'not-set';
   const fails = (pinFailures[channel] = pinFailures[channel].filter((t) => now - t < PIN_LOCK_WINDOW_MS));
   if (fails.length >= PIN_LOCK_FAILURES) return 'locked';
-  if (String(given ?? '').replace(/\D/g, '') === pin) return 'ok';
+  if (pinDigits(given) === pin) return 'ok';
   fails.push(now);
   if (fails.length === PIN_LOCK_FAILURES) {
     getLogger().warn({ channel }, 'Grok bridge: PIN locked after repeated wrong attempts');
@@ -257,8 +270,15 @@ export function resetPinFailuresForTests(): void {
 export function maskPin(text: string): string {
   const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
   if (!pin) return text;
-  const digits = pin.split('').join(String.raw`[\s.,-]*`);
-  return text.replace(new RegExp(String.raw`(?<!\d)` + digits + String.raw`(?!\d)`, 'g'), '[PIN]');
+  // Each digit may be written as a digit or a word ("8" or "eight"), since STT spells PINs out.
+  const words = (d: string) => Object.keys(DIGIT_WORDS).filter((w) => DIGIT_WORDS[w] === d);
+  // Digits keep the digit-only guard ("PIN654321" is masked); words need word boundaries so
+  // "someone" is never read as "one".
+  const digits = pin
+    .split('')
+    .map((d) => `(?:${[d, ...words(d).map((w) => String.raw`\b${w}\b`)].join('|')})`)
+    .join(String.raw`[\s.,-]*`);
+  return text.replace(new RegExp(String.raw`(?<!\d)` + digits + String.raw`(?!\d)`, 'gi'), '[PIN]');
 }
 
 /** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */

@@ -55,6 +55,10 @@ describe('owner texts with a PIN set', () => {
     expect(maskPin('6-5-4-3-2-1, move gym')).toBe('[PIN], move gym');
     expect(maskPin('meeting at 4:30')).toBe('meeting at 4:30');
     expect(maskPin('order 96543210 shipped')).toBe('order 96543210 shipped'); // not inside a longer number
+    expect(maskPin('Caller: Six five four three two one.')).toBe('Caller: [PIN].'); // spelled out by STT
+    expect(maskPin('six, five, 4, three, two, one')).toBe('[PIN]');
+    expect(maskPin('six five four three two two')).toBe('six five four three two two'); // a wrong PIN is not the secret
+    expect(maskPin('PIN654321 please')).toBe('PIN[PIN] please'); // glued to letters: still masked
   });
 
   it('locks for an hour after 5 wrong PINs and texts Hussein once', async () => {
@@ -65,6 +69,15 @@ describe('owner texts with a PIN set', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(texts).toEqual(['Sky: 5 wrong PIN attempts by texts in the last hour. Owner commands by texts are locked for an hour.']);
     expect(checkPin('654321', 'sms', t0 + 61 * 60_000)).toBe('ok'); // lock expires
+  });
+
+  it('accepts a spoken PIN given as words, digits or a mix', async () => {
+    const { checkPin, pinDigits } = await import('../src/services/grokBridge');
+    expect(pinDigits('six five four three two one')).toBe('654321');
+    expect(pinDigits('Six, five, 4-3, two one.')).toBe('654321');
+    expect(pinDigits('my pin is six five four three two one')).toBe('654321'); // other words ignored
+    expect(checkPin('six five four three two one', 'call')).toBe('ok');
+    expect(checkPin('six five four three two two', 'call')).toBe('wrong');
   });
 
   it('keeps calls usable while spoofed texts are locked out', async () => {
