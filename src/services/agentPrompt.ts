@@ -656,7 +656,7 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
 
 // ── Command mode (owner voice commands) ───────────────
 
-const COMMAND_GREETING = 'Voice commands. What would you like me to do?';
+const COMMAND_GREETING = 'Hi Hussein, what can I do for you?';
 
 function commandPrompt(): string {
   const env = getEnv();
@@ -664,7 +664,7 @@ function commandPrompt(): string {
   try { bots = Object.keys(JSON.parse(env.GROK_BOTS) as object); } catch { /* health shows the bad JSON */ }
   const lines = [COMMAND_AGENT_PROMPT, '', `His Grok bots: ${bots.length ? bots.join(', ') : 'none set up yet'}. Main bot: ${env.GROK_DEFAULT_BOT}.`];
   if (env.OWNER_PIN) {
-    lines.push("Before the first send_sms, relay_to_bot or get_today_schedule of this call, ask for his PIN and pass the digits as pin. If the result says the PIN did not match, ask once more; after that, stop and say you can't relay without it. Never say the PIN back.");
+    lines.push("PIN or passphrase: never decide yourself whether it is right, and never say it did or did not match unless a function result says so. Call send_sms, relay_to_bot or get_today_schedule right away; if the result asks for his PIN or passphrase, ask him to say it, then call the same function again and pass what he said as pin. Never repeat it back. Never list what you can do unless he asks.");
   }
   return lines.join('\n');
 }

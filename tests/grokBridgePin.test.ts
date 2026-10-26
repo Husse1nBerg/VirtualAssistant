@@ -33,13 +33,13 @@ describe('owner texts with a PIN set', () => {
   it('relays only when the text starts with the PIN', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
     expect(await handleOwnerText('654321 grok, remind me at 6')).toBe("Sent to grok bot. I'll text you its answer.");
-    expect(await handleOwnerText('grok, remind me at 6')).toContain('Start bot commands with your PIN');
-    expect(await handleOwnerText('111111 grok, remind me at 6')).toContain('Start bot commands with your PIN');
+    expect(await handleOwnerText('grok, remind me at 6')).toContain('Start bot commands with your PIN or passphrase');
+    expect(await handleOwnerText('111111 grok, remind me at 6')).toContain('Start bot commands with your PIN or passphrase');
   });
 
   it('guards the schedule too', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
-    expect(await handleOwnerText('agenda')).toContain('Start bot commands with your PIN');
+    expect(await handleOwnerText('agenda')).toContain('Start bot commands with your PIN or passphrase');
     expect(await handleOwnerText('654321 agenda')).toBe('9:30 standup');
   });
 
