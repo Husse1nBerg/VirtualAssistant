@@ -223,43 +223,54 @@ export function isOwnerNumber(from: string): boolean {
 
 const PIN_LOCK_FAILURES = 5;
 const PIN_LOCK_WINDOW_MS = 60 * 60_000;
-let pinFailures: number[] = [];
+export type PinChannel = 'call' | 'sms';
+// ponytail: in memory, so a restart clears the count; with a 6-8 digit PIN at 5 guesses an hour
+// that is still years of guessing. Persist it if PINs ever get shorter.
+const pinFailures: Record<PinChannel, number[]> = { call: [], sms: [] };
 
-export type PinResult = 'ok' | 'wrong' | 'locked' | 'not-required';
+export type PinResult = 'ok' | 'wrong' | 'locked' | 'not-set';
 
-/** Server-wide check: 5 wrong PINs in an hour lock relaying for the rest of that hour and alert Hussein. */
-export function checkPin(given: unknown, now = Date.now()): PinResult {
+/** 5 wrong PINs in an hour on one channel lock that channel for the hour and alert Hussein.
+ *  Separate channels, so spoofed texts can't lock him out of calls (or the reverse). */
+export function checkPin(given: unknown, channel: PinChannel, now = Date.now()): PinResult {
   const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
-  if (!pin) return 'not-required';
-  pinFailures = pinFailures.filter((t) => now - t < PIN_LOCK_WINDOW_MS);
-  if (pinFailures.length >= PIN_LOCK_FAILURES) return 'locked';
+  if (!pin) return 'not-set';
+  const fails = (pinFailures[channel] = pinFailures[channel].filter((t) => now - t < PIN_LOCK_WINDOW_MS));
+  if (fails.length >= PIN_LOCK_FAILURES) return 'locked';
   if (String(given ?? '').replace(/\D/g, '') === pin) return 'ok';
-  pinFailures.push(now);
-  if (pinFailures.length === PIN_LOCK_FAILURES) {
-    getLogger().warn('Grok bridge: PIN locked after repeated wrong attempts');
-    textOwner('Sky: 5 wrong PIN attempts in the last hour. Bot commands are locked for an hour.').catch(() => {});
+  fails.push(now);
+  if (fails.length === PIN_LOCK_FAILURES) {
+    getLogger().warn({ channel }, 'Grok bridge: PIN locked after repeated wrong attempts');
+    const via = channel === 'call' ? 'calls' : 'texts';
+    textOwner(`Sky: 5 wrong PIN attempts by ${via} in the last hour. Owner commands by ${via} are locked for an hour.`).catch(() => {});
   }
   return 'wrong';
 }
 
 export function resetPinFailuresForTests(): void {
-  pinFailures = [];
+  pinFailures.call = [];
+  pinFailures.sms = [];
+}
+
+/** Hide the owner's PIN in logs and saved transcripts, however it was spaced or dashed,
+ *  but never inside a longer number. */
+export function maskPin(text: string): string {
+  const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
+  if (!pin) return text;
+  const digits = pin.split('').join(String.raw`[\s.,-]*`);
+  return text.replace(new RegExp(String.raw`(?<!\d)` + digits + String.raw`(?!\d)`, 'g'), '[PIN]');
 }
 
 /** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */
 export async function handleOwnerText(rawBody: string): Promise<string | null> {
-  // With a PIN set, bridge texts start with it: "1234 tell planner to move gym to 7".
-  let body = rawBody;
-  const pinSet = getEnv().OWNER_PIN.length > 0;
+  // Bridge texts start with the PIN: "123456 tell planner to move gym to 7".
   const lead = rawBody.trim().match(/^(\d{4,8})\s+(.+)$/s);
-  if (pinSet && lead) body = lead[2];
-  const parsed = parseOwnerText(body, [...botDirectory().keys()]);
+  const parsed = parseOwnerText(lead ? lead[2] : rawBody, [...botDirectory().keys()]);
   if (!parsed) return null;
-  if (pinSet) {
-    const result = checkPin(lead?.[1]);
-    if (result === 'locked') return 'Bot commands are locked for an hour after repeated wrong PINs.';
-    if (result !== 'ok') return 'Start bot commands with your PIN, like: 1234 tell planner to move gym to 7.';
-  }
+  const result = checkPin(lead?.[1], 'sms');
+  if (result === 'not-set') return 'Bot commands are off until a PIN is set on Sky.';
+  if (result === 'locked') return 'Bot commands by text are locked for an hour after repeated wrong PINs.';
+  if (result !== 'ok') return 'Start bot commands with your PIN, like: 123456 tell planner to move gym to 7.';
   if (parsed.kind === 'schedule') return describeSchedule();
   try {
     const { bot } = await relayToBot(parsed.bot, parsed.command, 'sms');

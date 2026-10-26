@@ -517,6 +517,7 @@ export const COMMAND_FUNCTIONS = [
           type: 'string',
           description: 'The SMS message body to send',
         },
+        pin: { type: 'string', description: 'His PIN, digits only, when Sky asks for it.' },
       },
       required: ['contact_name_or_phone', 'message'],
     },
@@ -663,7 +664,7 @@ function commandPrompt(): string {
   try { bots = Object.keys(JSON.parse(env.GROK_BOTS) as object); } catch { /* health shows the bad JSON */ }
   const lines = [COMMAND_AGENT_PROMPT, '', `His Grok bots: ${bots.length ? bots.join(', ') : 'none set up yet'}. Main bot: ${env.GROK_DEFAULT_BOT}.`];
   if (env.OWNER_PIN) {
-    lines.push("Before the first relay_to_bot or get_today_schedule of this call, ask for his PIN and pass the digits as pin. If the result says the PIN did not match, ask once more; after that, stop and say you can't relay without it. Never say the PIN back.");
+    lines.push("Before the first send_sms, relay_to_bot or get_today_schedule of this call, ask for his PIN and pass the digits as pin. If the result says the PIN did not match, ask once more; after that, stop and say you can't relay without it. Never say the PIN back.");
   }
   return lines.join('\n');
 }

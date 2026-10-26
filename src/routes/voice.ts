@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { createHmac, timingSafeEqual } from 'crypto';
 import VoiceResponse from 'twilio/lib/twiml/VoiceResponse';
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
@@ -42,10 +43,24 @@ function buildGreetingText(callerName?: string, isCommandMode?: boolean, greetin
  * When OOO mode is on (OOO_ENABLED), the greeting says you're away and still taking messages.
  * Result is cached in memory per greeting text — Deepgram is only called once per server process per text.
  */
+/** Signs the greeting link's parameters, so only Sky's own TwiML can make it speak (and spend TTS). */
+function greetingSig(q: Record<string, unknown>): string {
+  const fields = ['caller', 'vip', 'lang', 'g', 'mode'].map((k) => (typeof q[k] === 'string' ? q[k] : ''));
+  return createHmac('sha256', getEnv().TWILIO_AUTH_TOKEN).update(fields.join('|')).digest('base64url').slice(0, 22);
+}
+
 router.get('/greeting', async (req: Request, res: Response) => {
+  if (getEnv().NODE_ENV !== 'development') {
+    const given = Buffer.from(typeof req.query.s === 'string' ? req.query.s : '');
+    const want = Buffer.from(greetingSig(req.query));
+    if (given.length !== want.length || !timingSafeEqual(given, want)) {
+      getLogger().warn({ requestId: req.requestId }, 'Greeting: missing or bad signature');
+      return res.status(403).send('Forbidden');
+    }
+  }
   const log = getLogger();
   const env = getEnv();
-  const callerName = typeof req.query.caller === 'string' ? req.query.caller : undefined;
+  const callerName = typeof req.query.caller === 'string' ? req.query.caller.slice(0, 60) : undefined;
   const isCommandMode = req.query.mode === 'command';
   const gRaw = typeof req.query.g === 'string' ? req.query.g : undefined;
   const greetingIdx = gRaw !== undefined && /^\d+$/.test(gRaw) ? Number(gRaw) : undefined;
@@ -126,8 +141,8 @@ router.get('/recording/:callLogId', async (req: Request, res: Response) => {
   const env = getEnv();
 
   // Gate raw call audio behind the dashboard token (Twilio MMS and dashboard links carry it).
-  // If no token is configured there is no secret to check against, so fall through (unchanged).
-  if (env.DASHBOARD_TOKEN && !isValidDashboardToken(req.query.token)) {
+  // No token configured = no way to authorize anyone, so recordings stay closed.
+  if (!env.DASHBOARD_TOKEN || !isValidDashboardToken(req.query.token)) {
     log.warn({ callLogId }, 'Recording proxy: missing/invalid token');
     return res.status(404).send('Recording not found');
   }
@@ -214,7 +229,9 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
 
     // Play greeting via Deepgram TTS (same voice as the agent) — blocks until complete before <Connect>.
     // Twilio fetches /voice/greeting, which calls Deepgram and returns the MP3.
-    twiml.play(`${env.BASE_URL}/voice/greeting${greetingParams}`);
+    const greetingQuery = new URLSearchParams(greetingParams.replace(/^\?/, ''));
+    greetingQuery.set('s', greetingSig(Object.fromEntries(greetingQuery)));
+    twiml.play(`${env.BASE_URL}/voice/greeting?${greetingQuery.toString()}`);
 
     const mode = isOwnerCall ? 'command' : 'default';
     const connect = twiml.connect();

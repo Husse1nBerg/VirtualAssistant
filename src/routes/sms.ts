@@ -3,6 +3,7 @@ import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { updateNotificationByMessageId } from '../services/database';
 import { handleIncomingSms } from '../services/smsBrain';
+import { maskPin } from '../services/grokBridge';
 
 const router = Router();
 
@@ -17,7 +18,7 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
   const to = req.body.To as string;
   const body = (req.body.Body as string || '').trim();
 
-  log.info({ requestId: req.requestId, from, to, body: body.slice(0, 80) }, 'Inbound SMS received');
+  log.info({ requestId: req.requestId, from, to, body: maskPin(body).slice(0, 80) }, 'Inbound SMS received');
 
   // Return TwiML <Response><Message> to reply to the sender
   res.type('text/xml');
