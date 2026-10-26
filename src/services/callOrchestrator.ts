@@ -23,6 +23,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
+import { relayToBot, describeSchedule, onLiveOwnerCall, checkPin, BridgeError } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ interface CallSession {
   summary: CallSummary | null;
   contact: Contact | null;  // resolved caller contact (for VIP urgency + context)
   isCommandMode?: boolean;  // true when owner called to give voice commands
+  pinOk?: boolean;          // owner gave the right PIN on this call (Grok bot features)
+  pinTries?: number;        // wrong PINs on this call
 }
 
 // ── Active Sessions ──────────────────────────────────
@@ -311,6 +314,16 @@ export function handleAgentEvent(session: CallSession, event: any): void {
           handleTransferRequest(session, input, functionCallId, clientSide).catch((err) =>
             log.error({ callId: session.callId, err }, 'Transfer request failed')
           );
+        } else if (functionName === 'relay_to_bot' && session.isCommandMode) {
+          handleRelayToBot(session, input, functionCallId, clientSide).catch((err) =>
+            log.error({ callId: session.callId, err }, 'Relay to bot failed')
+          );
+        } else if (functionName === 'get_today_schedule' && session.isCommandMode) {
+          const refusal = pinRefusal(session, input);
+          if (refusal) sendFunctionResponse(session, functionCallId, clientSide, refusal);
+          else describeSchedule()
+            .then((t) => sendFunctionResponse(session, functionCallId, clientSide, t))
+            .catch((err) => log.error({ callId: session.callId, err }, 'Schedule lookup failed'));
         } else if (functionName === 'send_sms') {
           handleSendSmsCommand(session, input, functionCallId, clientSide).catch((err) =>
             log.error({ callId: session.callId, err }, 'Send SMS command failed')
@@ -447,6 +460,61 @@ async function handleSendSmsCommand(
     sendFunctionResponse(session, functionCallId, clientSide, "Sorry, the text didn't go through. Try again or send it yourself.");
   }
 }
+
+async function handleRelayToBot(
+  session: CallSession,
+  input: Record<string, unknown>,
+  functionCallId: string,
+  clientSide: boolean
+): Promise<void> {
+  const refusal = pinRefusal(session, input);
+  if (refusal) {
+    sendFunctionResponse(session, functionCallId, clientSide, refusal);
+    return;
+  }
+  const command = String(input.command ?? '').trim();
+  if (!command) {
+    sendFunctionResponse(session, functionCallId, clientSide, 'What should I send?');
+    return;
+  }
+  const botName = String(input.bot_name ?? '').trim() || undefined;
+  try {
+    const { bot } = await relayToBot(botName, command, 'call');
+    sendFunctionResponse(session, functionCallId, clientSide, `Sent to ${bot.name}. Tell him you'll let him know when it answers.`);
+  } catch (err) {
+    const msg = err instanceof BridgeError ? err.message : "Sorry, I couldn't send that.";
+    sendFunctionResponse(session, functionCallId, clientSide, msg);
+  }
+}
+
+const PIN_TRIES_PER_CALL = 3;
+
+/** null when the bot features may run on this call; otherwise what Sky should say. Checked here,
+ *  not by the AI: caller ID can be spoofed, and the AI can be talked out of a rule. */
+function pinRefusal(session: CallSession, input: Record<string, unknown>): string | null {
+  if (session.pinOk) return null;
+  if ((session.pinTries ?? 0) >= PIN_TRIES_PER_CALL) return 'Too many wrong PINs on this call. Bot features are off until he calls again.';
+  const result = checkPin(input.pin);
+  if (result === 'ok' || result === 'not-required') {
+    session.pinOk = true;
+    return null;
+  }
+  if (result === 'locked') return 'Bot features are locked for an hour after repeated wrong PINs.';
+  session.pinTries = (session.pinTries ?? 0) + 1;
+  return 'The PIN did not match, so nothing was done. Ask for the PIN.';
+}
+
+// A bot's answer arriving while Hussein is on a command call is said aloud, not just texted,
+// but only on a call that passed the PIN (or when no PIN is set).
+onLiveOwnerCall((text) => {
+  for (const s of sessions.values()) {
+    if (s.isCommandMode && s.pinOk && !s.ended && s.agentWs?.readyState === WebSocket.OPEN) {
+      s.agentWs.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
+      return true;
+    }
+  }
+  return false;
+});
 
 function sendFunctionResponse(
   session: CallSession,

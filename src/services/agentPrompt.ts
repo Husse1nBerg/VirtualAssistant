@@ -470,7 +470,8 @@ const COMMAND_AGENT_PROMPT = `You are Hussein's voice command assistant. He is c
 
 You can:
 - Send a text: "Text [name or phone] [message]". Call the send_sms function with contact_name_or_phone (first name or full name from his contacts, or a phone number) and message. If he says "text John I'll be late" call send_sms with contact_name_or_phone "John" and message "I'll be late".
-- You may add more commands later (reminders, calendar).
+- Questions about today ("what's my afternoon like?", "when's my next meeting?"): call get_today_schedule and answer from it in one or two sentences. If the answer isn't in it, offer to ask his bot.
+- Anything for his Grok bots (planning, reminders, changing his schedule, research, "tell planner to move gym to 7", "ask grok what's on Friday"): call relay_to_bot. Put the bot's name in bot_name ONLY if he names one; otherwise leave it empty and it goes to his main bot, which hands it to the right sub-bot. Put his full request in command, in his words. Then say only: "Sent to <bot>. I'll tell you or text you when it answers." Never pretend the task is done before the bot answers.
 
 Rules:
 - Confirm briefly after each action: "Done. Text sent to John." or "I couldn't find a contact named X. Try saying their full name or number."
@@ -479,6 +480,28 @@ Rules:
 - If he says "that's all" or "nothing else" or "goodbye", say goodbye and the call can end.`;
 
 export const COMMAND_FUNCTIONS = [
+  {
+    name: 'relay_to_bot',
+    description:
+      "Send Hussein's command or question to one of his Grok bots. The bot answers later; Sky tells him on the call or texts him.",
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        bot_name: { type: 'string', description: 'Only if he names a bot (e.g. "planner"). Leave empty for his main bot.' },
+        command: { type: 'string', description: 'His complete request, in his words.' },
+        pin: { type: 'string', description: 'His PIN, digits only, when Sky asks for it.' },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'get_today_schedule',
+    description: "Today's schedule as last reported by his bots. Use it to answer questions about his day.",
+    parameters: {
+      type: 'object' as const,
+      properties: { pin: { type: 'string', description: 'His PIN, digits only, when Sky asks for it.' } },
+    },
+  },
   {
     name: 'send_sms',
     description:
@@ -634,6 +657,17 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
 
 const COMMAND_GREETING = 'Voice commands. What would you like me to do?';
 
+function commandPrompt(): string {
+  const env = getEnv();
+  let bots: string[] = [];
+  try { bots = Object.keys(JSON.parse(env.GROK_BOTS) as object); } catch { /* health shows the bad JSON */ }
+  const lines = [COMMAND_AGENT_PROMPT, '', `His Grok bots: ${bots.length ? bots.join(', ') : 'none set up yet'}. Main bot: ${env.GROK_DEFAULT_BOT}.`];
+  if (env.OWNER_PIN) {
+    lines.push("Before the first relay_to_bot or get_today_schedule of this call, ask for his PIN and pass the digits as pin. If the result says the PIN did not match, ask once more; after that, stop and say you can't relay without it. Never say the PIN back.");
+  }
+  return lines.join('\n');
+}
+
 export function buildCommandAgentSettings(_deepgramApiKey: string) {
   return {
     ...baseSettings,
@@ -646,7 +680,7 @@ export function buildCommandAgentSettings(_deepgramApiKey: string) {
       },
       think: {
         provider: { type: 'open_ai' as const, model: OPENAI_THINK_MODEL },
-        prompt: COMMAND_AGENT_PROMPT,
+        prompt: commandPrompt(),
         functions: COMMAND_FUNCTIONS,
       },
     },
@@ -668,7 +702,7 @@ export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, ant
           type: 'anthropic' as const,
           model: ANTHROPIC_THINK_MODEL,
         },
-        prompt: COMMAND_AGENT_PROMPT,
+        prompt: commandPrompt(),
         functions: COMMAND_FUNCTIONS,
         endpoint: {
           url: 'https://api.anthropic.com',
