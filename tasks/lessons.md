@@ -71,3 +71,8 @@
 **Root cause**: I mapped "Grok" to the model API I knew, not to the product he uses, and started building before asking what Grok already does for him. I also asked the user to check app settings that public docs could answer.
 **Rule**: When a user names a product they "use", find out what it does for them before designing around it, and research its integration surface (docs.x.ai, cursor.com/help) first. Prefer the fastest documented trigger (webhook) over a convenient one (email).
 **Example**: Grok Bot routines take a Webhook trigger (POST, `Authorization: Bearer <key>`, JSON body passed to the run; 200 = run started; 200 runs/hour/routine) and connect to remote MCP servers. Sky now starts routines by webhook and exposes `/connector/mcp` for the answers.
+
+## [2026-10-26] Committed with a failing test, and lost a regex backslash to shell escaping
+**What happened**: `vitest ... | grep ... && git commit` committed with 1 failing test: grep succeeded, so the chain carried on. The failure was a PIN-masking regex whose `\s` lost its backslash through Python-in-bash escaping (`'[\s.,-]*'` in a JS string is `[s.,-]*`), so spoken PINs like "4 3 2 1" were not masked.
+**Rule**: Gate commits on the test runner's own exit code, never on a pipe. Write regex sources with String.raw (or edit with the editor tool) rather than through layered shell quoting.
+**Example**: `npx vitest run > log 2>&1; [ $? -eq 0 ] || exit 1`. `new RegExp(String.raw\`(?<!\d)\` + digits)`.
