@@ -219,10 +219,47 @@ export function isOwnerNumber(from: string): boolean {
   return owner.length >= 8 && allDigits(from) === owner;
 }
 
+// ── PIN (second factor: caller ID and SMS sender can be spoofed) ─────────────
+
+const PIN_LOCK_FAILURES = 5;
+const PIN_LOCK_WINDOW_MS = 60 * 60_000;
+let pinFailures: number[] = [];
+
+export type PinResult = 'ok' | 'wrong' | 'locked' | 'not-required';
+
+/** Server-wide check: 5 wrong PINs in an hour lock relaying for the rest of that hour and alert Hussein. */
+export function checkPin(given: unknown, now = Date.now()): PinResult {
+  const pin = getEnv().OWNER_PIN.replace(/\D/g, '');
+  if (!pin) return 'not-required';
+  pinFailures = pinFailures.filter((t) => now - t < PIN_LOCK_WINDOW_MS);
+  if (pinFailures.length >= PIN_LOCK_FAILURES) return 'locked';
+  if (String(given ?? '').replace(/\D/g, '') === pin) return 'ok';
+  pinFailures.push(now);
+  if (pinFailures.length === PIN_LOCK_FAILURES) {
+    getLogger().warn('Grok bridge: PIN locked after repeated wrong attempts');
+    textOwner('Sky: 5 wrong PIN attempts in the last hour. Bot commands are locked for an hour.').catch(() => {});
+  }
+  return 'wrong';
+}
+
+export function resetPinFailuresForTests(): void {
+  pinFailures = [];
+}
+
 /** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */
-export async function handleOwnerText(body: string): Promise<string | null> {
+export async function handleOwnerText(rawBody: string): Promise<string | null> {
+  // With a PIN set, bridge texts start with it: "1234 tell planner to move gym to 7".
+  let body = rawBody;
+  const pinSet = getEnv().OWNER_PIN.length > 0;
+  const lead = rawBody.trim().match(/^(\d{4,8})\s+(.+)$/s);
+  if (pinSet && lead) body = lead[2];
   const parsed = parseOwnerText(body, [...botDirectory().keys()]);
   if (!parsed) return null;
+  if (pinSet) {
+    const result = checkPin(lead?.[1]);
+    if (result === 'locked') return 'Bot commands are locked for an hour after repeated wrong PINs.';
+    if (result !== 'ok') return 'Start bot commands with your PIN, like: 1234 tell planner to move gym to 7.';
+  }
   if (parsed.kind === 'schedule') return describeSchedule();
   try {
     const { bot } = await relayToBot(parsed.bot, parsed.command, 'sms');

@@ -23,7 +23,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
-import { relayToBot, describeSchedule, onLiveOwnerCall, BridgeError } from './grokBridge';
+import { relayToBot, describeSchedule, onLiveOwnerCall, checkPin, BridgeError } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -41,7 +41,8 @@ interface CallSession {
   summary: CallSummary | null;
   contact: Contact | null;  // resolved caller contact (for VIP urgency + context)
   isCommandMode?: boolean;  // true when owner called to give voice commands
-  pinOk?: boolean;          // owner gave the right PIN on this call (Grok bot relays)
+  pinOk?: boolean;          // owner gave the right PIN on this call (Grok bot features)
+  pinTries?: number;        // wrong PINs on this call
 }
 
 // ── Active Sessions ──────────────────────────────────
@@ -318,7 +319,9 @@ export function handleAgentEvent(session: CallSession, event: any): void {
             log.error({ callId: session.callId, err }, 'Relay to bot failed')
           );
         } else if (functionName === 'get_today_schedule' && session.isCommandMode) {
-          describeSchedule()
+          const refusal = pinRefusal(session, input);
+          if (refusal) sendFunctionResponse(session, functionCallId, clientSide, refusal);
+          else describeSchedule()
             .then((t) => sendFunctionResponse(session, functionCallId, clientSide, t))
             .catch((err) => log.error({ callId: session.callId, err }, 'Schedule lookup failed'));
         } else if (functionName === 'send_sms') {
@@ -464,15 +467,10 @@ async function handleRelayToBot(
   functionCallId: string,
   clientSide: boolean
 ): Promise<void> {
-  const pin = getEnv().OWNER_PIN;
-  // Checked here, not by the AI: caller ID can be spoofed, and the AI can be talked out of a rule.
-  if (pin && !session.pinOk) {
-    const given = String(input.pin ?? '').replace(/\D/g, '');
-    if (given !== pin.replace(/\D/g, '')) {
-      sendFunctionResponse(session, functionCallId, clientSide, 'The PIN did not match, so nothing was sent. Ask for the PIN.');
-      return;
-    }
-    session.pinOk = true;
+  const refusal = pinRefusal(session, input);
+  if (refusal) {
+    sendFunctionResponse(session, functionCallId, clientSide, refusal);
+    return;
   }
   const command = String(input.command ?? '').trim();
   if (!command) {
@@ -489,10 +487,28 @@ async function handleRelayToBot(
   }
 }
 
-// A bot's answer arriving while Hussein is on a command call is said aloud, not just texted.
+const PIN_TRIES_PER_CALL = 3;
+
+/** null when the bot features may run on this call; otherwise what Sky should say. Checked here,
+ *  not by the AI: caller ID can be spoofed, and the AI can be talked out of a rule. */
+function pinRefusal(session: CallSession, input: Record<string, unknown>): string | null {
+  if (session.pinOk) return null;
+  if ((session.pinTries ?? 0) >= PIN_TRIES_PER_CALL) return 'Too many wrong PINs on this call. Bot features are off until he calls again.';
+  const result = checkPin(input.pin);
+  if (result === 'ok' || result === 'not-required') {
+    session.pinOk = true;
+    return null;
+  }
+  if (result === 'locked') return 'Bot features are locked for an hour after repeated wrong PINs.';
+  session.pinTries = (session.pinTries ?? 0) + 1;
+  return 'The PIN did not match, so nothing was done. Ask for the PIN.';
+}
+
+// A bot's answer arriving while Hussein is on a command call is said aloud, not just texted,
+// but only on a call that passed the PIN (or when no PIN is set).
 onLiveOwnerCall((text) => {
   for (const s of sessions.values()) {
-    if (s.isCommandMode && !s.ended && s.agentWs?.readyState === WebSocket.OPEN) {
+    if (s.isCommandMode && s.pinOk && !s.ended && s.agentWs?.readyState === WebSocket.OPEN) {
       s.agentWs.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
       return true;
     }
