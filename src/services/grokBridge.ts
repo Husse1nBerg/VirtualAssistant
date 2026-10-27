@@ -283,6 +283,20 @@ function secretMatches(given: unknown): boolean {
   return pinDigits(said) === getEnv().OWNER_PIN.replace(/\D/g, '');
 }
 
+/** Is this utterance an attempt at the secret (so it should be checked and counted), or just
+ *  talk ("can you repeat that?", a new command)? Talk is left alone so it never burns a try. */
+export function looksLikeSecret(text: string): boolean {
+  const words = normalizePhrase(text).split(' ').filter(Boolean);
+  const phrase = ownerPhrase();
+  if (phrase) {
+    // Short, and using at least one word of the passphrase: a near-miss counts, a new sentence doesn't.
+    const secretWords = new Set(phrase.split(' '));
+    return words.length <= secretWords.size + 3 && words.some((w) => secretWords.has(w));
+  }
+  const nonNumberWords = words.filter((w) => !/^\d+$/.test(w) && !(w in DIGIT_WORDS));
+  return pinDigits(text).length >= 4 && nonNumberWords.length <= 4;
+}
+
 /** A text that starts with the PIN or passphrase: returns it and the command after it. */
 function splitLeadingSecret(body: string): { secret: string; rest: string } | null {
   const phrase = ownerPhrase();

@@ -94,3 +94,18 @@ describe('schedule read aloud', () => {
       .toBe('6:00 PM to 7:00 PM: Sofia. 7:45 PM to 8:30 PM: Sammy.');
   });
 });
+
+describe('talk while Sky waits for the passphrase', () => {
+  it('is not counted as a wrong try, and the passphrase still works after it', async () => {
+    const { handleAgentEvent } = await import('../src/services/callOrchestrator');
+    const s = { callId: 'c2', streamSid: 'MZ2', isCommandMode: true, transcriptParts: [] as unknown[], awaitingPin: true,
+      twilioWs: { readyState: WebSocket.OPEN, send: vi.fn() } } as any;
+    for (const said of ['And can you repeat that for me?', 'Okay. Connect to Grubbot.',
+      'and then ask it to dispatch the teach works bot and complete a lesson for Steven today from six to eight']) {
+      handleAgentEvent(s, { type: 'ConversationText', role: 'user', content: said });
+    }
+    expect(s.pinTries).toBeUndefined();
+    handleAgentEvent(s, { type: 'ConversationText', role: 'user', content: 'Blue falcon river.' });
+    expect(s.pinOk).toBe(true);
+  });
+});
