@@ -23,7 +23,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
-import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, BridgeError } from './grokBridge';
+import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, secretName, pinLockLength, BridgeError } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -517,7 +517,7 @@ function pinRefusal(session: CallSession, input: Record<string, unknown>): strin
   // Not given yet: ask, without counting it as a wrong try.
   if (!String(input.pin ?? '').trim()) {
     session.awaitingPin = true;
-    return "What's your passphrase?";
+    return `What's your ${secretName()}?`;
   }
   const result = checkPin(input.pin, 'call');
   if (result === 'ok') {
@@ -525,10 +525,10 @@ function pinRefusal(session: CallSession, input: Record<string, unknown>): strin
     return null;
   }
   if (result === 'not-set') return "You'll need to set a PIN or passphrase on Sky first.";
-  if (result === 'locked') return "That's locked for an hour after too many wrong tries.";
+  if (result === 'locked') return `That's locked for ${pinLockLength()} after too many wrong tries.`;
   session.pinTries = (session.pinTries ?? 0) + 1;
   session.awaitingPin = true;
-  return "That didn't match. What's your passphrase?";
+  return `That didn't match. What's your ${secretName()}?`;
 }
 
 // A bot's answer arriving while Hussein is on a command call is said aloud, not just texted,

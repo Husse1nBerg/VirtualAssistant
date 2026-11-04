@@ -262,20 +262,26 @@ export function isOwnerNumber(from: string): boolean {
 // ── PIN (second factor: caller ID and SMS sender can be spoofed) ─────────────
 
 const PIN_LOCK_FAILURES = 5;
-const PIN_LOCK_WINDOW_MS = 60 * 60_000;
+// A short PIN (3 digits = 1,000 tries) locks for a day, so guessing takes months, not days.
+function lockWindowMs(): number {
+  return /^\d{3,5}$/.test(getEnv().OWNER_PIN.trim()) ? 24 * 3600_000 : 3600_000;
+}
+export const pinLockLength = () => (lockWindowMs() > 3600_000 ? '24 hours' : 'an hour');
+/** What Sky calls the secret out loud: "PIN" for digits, "passphrase" for words. */
+export const secretName = () => (ownerPhrase() ? 'passphrase' : 'PIN');
 export type PinChannel = 'call' | 'sms';
-// ponytail: in memory, so a restart clears the count; with a 6-8 digit PIN at 5 guesses an hour
-// that is still years of guessing. Persist it if PINs ever get shorter.
+// ponytail: in memory, so a restart clears the count. Fine while restarts are deploys only; persist it
+// if Sky ever restarts on its own (a restart would hand a guesser 5 fresh tries).
 const pinFailures: Record<PinChannel, number[]> = { call: [], sms: [] };
 
 export type PinResult = 'ok' | 'wrong' | 'locked' | 'not-set';
 
 const normalizePhrase = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-/** The owner's passphrase, normalised, when OWNER_PIN is words rather than 6-8 digits. */
+/** The owner's passphrase, normalised, when OWNER_PIN is words rather than 3-8 digits. */
 function ownerPhrase(): string | null {
   const v = getEnv().OWNER_PIN.trim();
-  return v && !/^\d{6,8}$/.test(v) ? normalizePhrase(v) : null;
+  return v && !/^\d{3,8}$/.test(v) ? normalizePhrase(v) : null;
 }
 
 /** Does what he said or typed match the PIN or passphrase? */
@@ -301,14 +307,14 @@ export function looksLikeSecret(text: string): boolean {
     return words.length >= 1 && words.length <= phrase.split(' ').length + 2 && !/\?\s*$/.test(text) && !talk.test(words[0]);
   }
   const nonNumberWords = words.filter((w) => !/^\d+$/.test(w) && !(w in DIGIT_WORDS));
-  return pinDigits(text).length >= 4 && nonNumberWords.length <= 4;
+  return pinDigits(text).length >= 3 && nonNumberWords.length <= 4;
 }
 
 /** A text that starts with the PIN or passphrase: returns it and the command after it. */
 function splitLeadingSecret(body: string): { secret: string; rest: string } | null {
   const phrase = ownerPhrase();
   if (!phrase) {
-    const m = body.trim().match(/^(\d{4,8})\s+(.+)$/s);
+    const m = body.trim().match(/^(\d{3,8})\s+(.+)$/s);
     return m ? { secret: m[1], rest: m[2] } : null;
   }
   const words = body.trim().split(/\s+/);
@@ -330,18 +336,18 @@ export function pinDigits(given: unknown): string {
     .replace(/\D/g, '');
 }
 
-/** 5 wrong PINs in an hour on one channel lock that channel for the hour and alert Hussein.
+/** 5 wrong PINs on one channel lock that channel (for an hour, or 24 hours with a short PIN) and alert Hussein.
  *  Separate channels, so spoofed texts can't lock him out of calls (or the reverse). */
 export function checkPin(given: unknown, channel: PinChannel, now = Date.now()): PinResult {
   if (!getEnv().OWNER_PIN) return 'not-set';
-  const fails = (pinFailures[channel] = pinFailures[channel].filter((t) => now - t < PIN_LOCK_WINDOW_MS));
+  const fails = (pinFailures[channel] = pinFailures[channel].filter((t) => now - t < lockWindowMs()));
   if (fails.length >= PIN_LOCK_FAILURES) return 'locked';
   if (secretMatches(given)) return 'ok';
   fails.push(now);
   if (fails.length === PIN_LOCK_FAILURES) {
     getLogger().warn({ channel }, 'Grok bridge: PIN locked after repeated wrong attempts');
     const via = channel === 'call' ? 'calls' : 'texts';
-    textOwner(`Sky: 5 wrong PIN attempts by ${via} in the last hour. Owner commands by ${via} are locked for an hour.`).catch(() => {});
+    textOwner(`Sky: 5 wrong PIN attempts by ${via}. Owner commands by ${via} are locked for ${pinLockLength()}.`).catch(() => {});
   }
   return 'wrong';
 }
@@ -380,7 +386,7 @@ export async function handleOwnerText(rawBody: string, photoUrls: string[] = [])
   if (!parsed) return null;
   const result = checkPin(lead?.secret, 'sms');
   if (result === 'not-set') return 'Bot commands are off until a PIN is set on Sky.';
-  if (result === 'locked') return 'Bot commands by text are locked for an hour after repeated wrong PINs.';
+  if (result === 'locked') return `Bot commands by text are locked for ${pinLockLength()} after repeated wrong PINs.`;
   if (result !== 'ok') return 'Start bot commands with your PIN or passphrase, then the command.';
   if (parsed.kind === 'schedule') return describeSchedule();
   try {

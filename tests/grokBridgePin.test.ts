@@ -67,7 +67,7 @@ describe('owner texts with a PIN set', () => {
     for (let i = 0; i < 5; i++) expect(checkPin('000000', 'sms', t0 + i)).toBe('wrong');
     expect(checkPin('654321', 'sms', t0 + 10)).toBe('locked'); // even the right PIN, during the lock
     await new Promise((r) => setTimeout(r, 0));
-    expect(texts).toEqual(['Sky: 5 wrong PIN attempts by texts in the last hour. Owner commands by texts are locked for an hour.']);
+    expect(texts).toEqual(['Sky: 5 wrong PIN attempts by texts. Owner commands by texts are locked for an hour.']);
     expect(checkPin('654321', 'sms', t0 + 61 * 60_000)).toBe('ok'); // lock expires
   });
 
