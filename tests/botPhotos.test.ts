@@ -20,6 +20,17 @@ const JPEG = Buffer.alloc(300_000, 7); // bigger than express's default 100 KB J
 const realFetch = globalThis.fetch;
 const outside: { url: string; headers: Record<string, string>; body?: string }[] = [];
 
+// Photo hosts and Twilio's media links (the address guard itself is tested below, for real).
+vi.mock('../src/services/publicFetch', async (orig) => ({
+  ...(await orig<typeof import('../src/services/publicFetch')>()),
+  fetchPublic: async (url: string, opts: { headers?: Record<string, string> }) => {
+    outside.push({ url, headers: opts.headers ?? {} });
+    if (url.includes('/page.html')) return { status: 200, type: 'text/html', data: Buffer.from('<html>') };
+    if (url.includes('/private')) return { status: 403, type: '', data: Buffer.alloc(0) };
+    return { status: 200, type: 'image/jpeg', data: JPEG };
+  },
+}));
+
 let server: Server;
 let base: string;
 
@@ -35,15 +46,12 @@ beforeAll(async () => {
   (await import('../src/config/env')).loadEnv();
   (await import('../src/utils/logger')).initLogger('fatal');
 
-  // The internet: photo hosts, Twilio's media links and the bot webhook. Local calls go through.
+  // The bot webhook. Local calls (the MCP client, downloads from Sky) go through.
   vi.stubGlobal('fetch', async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
     outside.push({ url, headers: (init?.headers ?? {}) as Record<string, string>, body: init?.body as string | undefined });
-    if (url.includes('/page.html')) return new Response('<html>', { headers: { 'Content-Type': 'text/html' } });
-    if (url.includes('/private')) return new Response('', { status: 403 });
-    if (url.startsWith('https://hooks.example')) return new Response('{}');
-    return new Response(JPEG, { headers: { 'Content-Type': 'image/jpeg' } });
+    return new Response('{}');
   });
 
   const express = (await import('express')).default;
@@ -121,5 +129,22 @@ describe('Hussein -> bot photos (MMS to Sky)', () => {
     expect(payload.command).toBe('what plant is this?');
     expect(payload.photos[0]).toMatch(/^https:\/\/sky\.example\/connector\/media\//);
     expect((await download(payload.photos[0])).bytes.equals(JPEG)).toBe(true);
+  });
+});
+
+describe('links a bot hands Sky reach only the public internet', () => {
+  it('knows private and internal addresses', async () => {
+    const { isPublicAddress } = await import('../src/services/publicFetch');
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '0.0.0.0', '100.64.0.1', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1']) {
+      expect(isPublicAddress(ip), ip).toBe(false);
+    }
+    for (const ip of ['8.8.8.8', '151.101.1.69', '2606:4700::1111']) expect(isPublicAddress(ip), ip).toBe(true);
+  });
+
+  it('refuses localhost, internal IPs and plain http before connecting', async () => {
+    const { fetchPublic } = await vi.importActual<typeof import('../src/services/publicFetch')>('../src/services/publicFetch');
+    for (const url of ['https://localhost/a.jpg', 'https://127.0.0.1/a.jpg', 'https://169.254.169.254/latest/meta-data', 'https://[::1]/a.jpg', 'http://example.com/a.jpg']) {
+      await expect(fetchPublic(url, { maxBytes: 1000 }), url).rejects.toThrow(/not a public address|only https/);
+    }
   });
 });
