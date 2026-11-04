@@ -14,6 +14,7 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { getPrisma } from './database';
 import { getTwilioClient } from './twilioClient';
+import { hostPhotos, PhotoError } from './mediaStore';
 
 // ── Bot directory ────────────────────────────────────────────────────────────
 
@@ -107,19 +108,21 @@ export function parseOwnerText(body: string, botNames: string[]): OwnerText | nu
 export class BridgeError extends Error {}
 
 /** The JSON body the routine receives along with its standing instruction. */
-export function relayPayload(id: string, command: string, channel: 'call' | 'sms') {
+export function relayPayload(id: string, command: string, channel: 'call' | 'sms', photos: string[] = []) {
   return {
     request_id: id,
     from: `Hussein, via Sky (${channel === 'call' ? 'phone call' : 'text message'})`,
     command,
+    ...(photos.length ? { photos } : {}),
     how_to_answer:
       `When done, call the Sky connector tool reply_to_hussein with request_id "${id}" and a one or ` +
-      'two sentence result. Sky reads it aloud if he is on a call, and texts it to him.',
+      'two sentence result. Sky reads it aloud if he is on a call, and texts it to him. ' +
+      'To send him photos, pass their links (https, or data:image/...;base64) in photo_urls.',
   };
 }
 
 /** Records the request and starts the bot's routine. Throws BridgeError with a sentence fit to say aloud. */
-export async function relayToBot(botName: string | undefined, command: string, channel: 'call' | 'sms') {
+export async function relayToBot(botName: string | undefined, command: string, channel: 'call' | 'sms', photos: string[] = []) {
   const env = getEnv();
   const bot = resolveBot(botName);
   if (!bot) {
@@ -133,7 +136,7 @@ export async function relayToBot(botName: string | undefined, command: string, c
     res = await fetch(bot.url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${bot.key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(relayPayload(request.id, command, channel)),
+      body: JSON.stringify(relayPayload(request.id, command, channel, photos)),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (err) {
@@ -158,12 +161,14 @@ export async function relayToBot(botName: string | undefined, command: string, c
 
 // ── Relay back: bot -> Sky -> Hussein ────────────────────────────────────────
 
-export async function textOwner(message: string): Promise<void> {
+/** Photos must be links Twilio can download: Sky's own /connector/media links (see hostPhotos). */
+export async function textOwner(message: string, photos: string[] = []): Promise<void> {
   const env = getEnv();
   await getTwilioClient().messages.create({
     from: env.TWILIO_PHONE_NUMBER,
     to: env.OWNER_PHONE_NUMBER,
     body: message.slice(0, 1500),
+    ...(photos.length ? { mediaUrl: photos } : {}),
   });
 }
 
@@ -174,14 +179,15 @@ export function onLiveOwnerCall(fn: (text: string) => boolean): void {
 }
 
 /** A bot's answer: stored, texted to Hussein, and spoken too if he's on a call with Sky. */
-export async function deliverReply(requestId: string, message: string): Promise<string> {
+export async function deliverReply(requestId: string, message: string, photos: string[] = []): Promise<string> {
   const prisma = getPrisma();
   const request = await prisma.botRequest.findUnique({ where: { id: requestId } });
   if (!request) return `No request with id ${requestId}.`;
   await prisma.botRequest.update({ where: { id: requestId }, data: { status: 'done', reply: message, repliedAt: new Date() } });
   const line = `${request.botName}: ${message}`;
-  const spoken = _sayOnLiveCall?.(`Update from ${line}`) ?? false;
-  await textOwner(line);
+  const shown = photos.length ? ` I texted you ${photos.length === 1 ? 'the photo' : `${photos.length} photos`}.` : '';
+  const spoken = _sayOnLiveCall?.(`Update from ${line}${shown}`) ?? false;
+  await textOwner(line, photos);
   getLogger().info({ requestId, bot: request.botName, spoken }, 'Grok bridge: reply delivered');
   return spoken ? 'Delivered: texted to Hussein and told him on his call.' : 'Delivered: texted to Hussein.';
 }
@@ -352,7 +358,7 @@ export function maskPin(text: string): string {
 }
 
 /** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */
-export async function handleOwnerText(rawBody: string): Promise<string | null> {
+export async function handleOwnerText(rawBody: string, photoUrls: string[] = []): Promise<string | null> {
   // Bridge texts start with the PIN: "123456 tell planner to move gym to 7".
   const lead = splitLeadingSecret(rawBody);
   const parsed = parseOwnerText(lead ? lead.rest : rawBody, [...botDirectory().keys()]);
@@ -363,9 +369,13 @@ export async function handleOwnerText(rawBody: string): Promise<string | null> {
   if (result !== 'ok') return 'Start bot commands with your PIN or passphrase, then the command.';
   if (parsed.kind === 'schedule') return describeSchedule();
   try {
-    const { bot } = await relayToBot(parsed.bot, parsed.command, 'sms');
-    return `Sent to ${bot.name}. I'll text you its answer.`;
+    // Re-hosted so the bot can open them without Twilio's credentials.
+    const photos = photoUrls.length ? await hostPhotos(photoUrls) : [];
+    const { bot } = await relayToBot(parsed.bot, parsed.command, 'sms', photos);
+    const attached = photos.length ? ` with ${photos.length === 1 ? 'your photo' : `your ${photos.length} photos`}` : '';
+    return `Sent to ${bot.name}${attached}. I'll text you its answer.`;
   } catch (err) {
+    if (err instanceof PhotoError) return `I couldn't attach your photo (${err.message}), so nothing was sent.`;
     return err instanceof BridgeError ? err.message : 'Something went wrong sending that. Try again.';
   }
 }

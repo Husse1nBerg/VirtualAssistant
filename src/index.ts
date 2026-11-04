@@ -50,7 +50,9 @@ async function main() {
 
   // Parse URL-encoded bodies (Twilio webhooks)
   app.use(express.urlencoded({ extended: false }));
-  app.use(express.json());
+  // The connector parses its own (larger) JSON bodies, after checking the secret.
+  const json = express.json();
+  app.use((req, res, next) => (req.path.startsWith('/connector') ? next() : json(req, res, next)));
 
   // Rate limiting: cap paid-API abuse (Deepgram/Claude) and dashboard token guessing.
   const webhookLimiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false });

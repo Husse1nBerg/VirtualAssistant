@@ -6,7 +6,7 @@
  * there is deliberately no tool that texts or calls anyone else.
  */
 
-import { Router, Request, Response, NextFunction } from 'express';
+import express, { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { z } from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -14,6 +14,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { deliverReply, textOwner, setSchedule, pendingRequests } from '../services/grokBridge';
+import { hostPhotos, getPhoto, PhotoError, MAX_PHOTOS } from '../services/mediaStore';
 
 const router = Router();
 
@@ -37,6 +38,22 @@ export function connectorAuth(req: Request, res: Response, next: NextFunction): 
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 
+const photoUrls = z
+  .array(z.string().min(1))
+  .max(MAX_PHOTOS)
+  .optional()
+  .describe('Photos to text him: https links Sky can download, or data:image/...;base64 URLs for private files. 5 MB total.');
+
+/** Downloads the photos first, so a bad link fails the call before anything is texted. */
+async function withPhotos(urls: string[] | undefined, send: (photos: string[]) => Promise<string>) {
+  try {
+    return text(await send(urls?.length ? await hostPhotos(urls) : []));
+  } catch (err) {
+    if (err instanceof PhotoError) return { ...text(`Nothing sent: ${err.message}.`), isError: true };
+    throw err;
+  }
+}
+
 export function buildConnectorServer(): McpServer {
   const server = new McpServer({ name: 'sky', version: '1.0.0' });
 
@@ -45,21 +62,22 @@ export function buildConnectorServer(): McpServer {
     {
       description:
         'Answer a request Sky relayed to you. Use the request_id from the request Sky sent you. Sky texts the message to Hussein, and says it aloud if he is on a call. Keep it to one or two sentences.',
-      inputSchema: { request_id: z.string().min(1), message: z.string().min(1).max(1500) },
+      inputSchema: { request_id: z.string().min(1), message: z.string().min(1).max(1500), photo_urls: photoUrls },
     },
-    async ({ request_id, message }) => text(await deliverReply(request_id, message)),
+    async ({ request_id, message, photo_urls }) => withPhotos(photo_urls, (photos) => deliverReply(request_id, message, photos)),
   );
 
   server.registerTool(
     'text_hussein',
     {
-      description: "Send Hussein a text from Sky's number (his daily agenda, a reminder, or an update you start yourself).",
-      inputSchema: { message: z.string().min(1).max(1500) },
+      description: "Send Hussein a text from Sky's number (his daily agenda, a reminder, an update you start yourself), with photos if you have any.",
+      inputSchema: { message: z.string().min(1).max(1500), photo_urls: photoUrls },
     },
-    async ({ message }) => {
-      await textOwner(message);
-      return text('Texted to Hussein.');
-    },
+    async ({ message, photo_urls }) =>
+      withPhotos(photo_urls, async (photos) => {
+        await textOwner(message, photos);
+        return photos.length ? `Texted to Hussein with ${photos.length} photo(s).` : 'Texted to Hussein.';
+      }),
   );
 
   server.registerTool(
@@ -88,7 +106,8 @@ export function buildConnectorServer(): McpServer {
 }
 
 // Stateless: a fresh server and transport per request, JSON responses, no sessions.
-router.post('/mcp', connectorAuth, async (req: Request, res: Response) => {
+// Photos travel as base64 in tool calls, so the connector takes bigger bodies, but only once authenticated.
+router.post('/mcp', connectorAuth, express.json({ limit: '8mb' }), async (req: Request, res: Response) => {
   const server = buildConnectorServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on('close', () => {
@@ -102,6 +121,13 @@ router.post('/mcp', connectorAuth, async (req: Request, res: Response) => {
     getLogger().error({ err }, 'Connector: request failed');
     if (!res.headersSent) res.status(500).json({ error: 'internal error' });
   }
+});
+
+// Photos in transit (Twilio MMS and bots download these). Unguessable ids, gone after a day.
+router.get('/media/:id', (req: Request, res: Response) => {
+  const photo = getPhoto(req.params.id as string);
+  if (!photo) return void res.sendStatus(404);
+  res.set({ 'Content-Type': photo.type, 'Cache-Control': 'private, max-age=86400' }).send(photo.data);
 });
 
 // Stateless servers have no event stream or session to end.
