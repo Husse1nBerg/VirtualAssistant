@@ -760,22 +760,24 @@ export function claimedOwnerSettings<T extends SwappableSettings>(settings: T): 
   } as T;
 }
 
-function commandPrompt(): string {
+function commandPrompt(lang = 'en'): string {
   const env = getEnv();
   let bots: string[] = [];
   try { bots = Object.keys(JSON.parse(env.GROK_BOTS) as object); } catch { /* health shows the bad JSON */ }
   const lines = [COMMAND_AGENT_PROMPT, '', `His Grok bots: ${bots.length ? bots.join(', ') : 'none set up yet'}. Main bot: ${env.GROK_DEFAULT_BOT}.`];
+  if (lang === 'fr') lines.push('He is speaking French: speak only French with him, in a warm Quebec register.');
   if (env.OWNER_PIN) {
     lines.push("PIN or passphrase: never decide yourself whether it is right, and never say it did or did not match unless a function result says so. Call send_sms, relay_to_bot or get_today_schedule right away; if the result asks for his PIN or passphrase, ask him to say it, then call the same function again and pass what he said as pin. Never repeat it back. Never list what you can do unless he asks.");
   }
   return lines.join('\n');
 }
 
-export function buildCommandAgentSettings(_deepgramApiKey: string) {
+export function buildCommandAgentSettings(_deepgramApiKey: string, lang = 'en') {
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,      speak: buildSpeak('en'),
+      ...baseSettings.agent,      speak: buildSpeak(lang),
+      listen: buildListen({ contact: null, recentCalls: [], language: lang }),
       context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
@@ -783,18 +785,19 @@ export function buildCommandAgentSettings(_deepgramApiKey: string) {
       },
       think: {
         provider: { type: 'open_ai' as const, model: OPENAI_THINK_MODEL },
-        prompt: commandPrompt(),
+        prompt: commandPrompt(lang),
         functions: COMMAND_FUNCTIONS,
       },
     },
   };
 }
 
-export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string) {
+export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string, lang = 'en') {
   return {
     ...baseSettings,
     agent: {
-      ...baseSettings.agent,      speak: buildSpeak('en'),
+      ...baseSettings.agent,      speak: buildSpeak(lang),
+      listen: buildListen({ contact: null, recentCalls: [], language: lang }),
       context: {
         messages: [
           { type: 'History' as const, role: 'assistant' as const, content: COMMAND_GREETING },
@@ -805,7 +808,7 @@ export function buildCommandAgentSettingsWithClaude(_deepgramApiKey: string, ant
           type: 'anthropic' as const,
           model: ANTHROPIC_THINK_MODEL,
         },
-        prompt: commandPrompt(),
+        prompt: commandPrompt(lang),
         functions: COMMAND_FUNCTIONS,
         endpoint: {
           url: 'https://api.anthropic.com',

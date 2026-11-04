@@ -30,7 +30,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
-import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, secretName, pinLockLength, claimsToBeOwner, availabilityAnswer, BridgeError } from './grokBridge';
+import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, secretName, pinLockLength, claimsToBeOwner, availabilityAnswer, frenchSpeech, BridgeError } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -206,11 +206,11 @@ async function initializeSession(
 
 type CallerContext = Parameters<typeof buildAgentSettings>[1];
 
-function ownerSettings() {
+function ownerSettings(lang = 'en') {
   const env = getEnv();
   return env.USE_OPENAI_FOR_AGENT
-    ? buildCommandAgentSettings(env.DEEPGRAM_API_KEY)
-    : buildCommandAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || '');
+    ? buildCommandAgentSettings(env.DEEPGRAM_API_KEY, lang)
+    : buildCommandAgentSettingsWithClaude(env.DEEPGRAM_API_KEY, env.ANTHROPIC_API_KEY || '', lang);
 }
 
 function strangerSettings(ctx: CallerContext) {
@@ -286,9 +286,9 @@ export function switchAgent(session: CallSession, to: 'owner' | 'stranger'): voi
   if (old && old.readyState !== WebSocket.CLOSED) old.close(1000, 'Switching agent');
 }
 
-/** The caller speaks French: reopen the message-taking agent in French (voice, listening, replies),
- *  the way a saved French contact gets it from the start. It keeps the conversation so far and
- *  answers what they just said. */
+/** The caller (or Hussein, on an owner call) speaks French: reopen the live agent in French (voice,
+ *  listening, replies), the way a saved French contact gets it from the start. It keeps the
+ *  conversation so far and answers what they just said. */
 export function switchToFrench(session: CallSession, said: string): void {
   if (session.ended) return;
   getLogger().info({ callId: session.callId }, 'French detected — switching Sky to French');
@@ -299,9 +299,14 @@ export function switchToFrench(session: CallSession, said: string): void {
   }
   const old = session.agentWs;
   // History = the greeting the caller actually heard (from the original settings) + the turns so far.
-  const heard = (strangerSettings({ ...session.callerCtx, language: undefined }).agent as { context?: { messages?: object[] } }).context?.messages ?? [];
+  // Owner agent for an owner call (claimed ones keep not_hussein); message-taking agent otherwise.
+  const original = session.isCommandMode ? (session.ownerClaimed ? null : ownerSettings()) : strangerSettings({ ...session.callerCtx, language: undefined });
+  const heard = (original?.agent as { context?: { messages?: object[] } } | undefined)?.context?.messages ?? [];
+  const french = session.isCommandMode
+    ? (session.ownerClaimed ? claimedOwnerSettings(ownerSettings('fr')) : ownerSettings('fr'))
+    : strangerSettings(session.callerCtx);
   const history = session.transcriptParts.slice(0, -1); // the last line is what we re-send below
-  openAgent(session, withHistory(strangerSettings(session.callerCtx), history, heard), (ws) => {
+  openAgent(session, withHistory(french, history, heard), (ws) => {
     session.injected = said;
     ws.send(JSON.stringify({ type: 'InjectUserMessage', content: said }));
   });
@@ -343,7 +348,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
       // "It's Hussein" on a call from another phone: stop taking a message and become his assistant.
       // His PIN still guards every action, as on calls from his own phone.
       const claimed = role === 'user' && !session.isCommandMode && claimsToBeOwner(raw);
-      const toFrench = !claimed && role === 'user' && !session.isCommandMode && !session.language &&
+      const toFrench = !claimed && role === 'user' && !session.language &&
         (session.callerCtx?.contact?.language ?? 'en') !== 'fr' && looksFrench(raw);
 
       if (content) {
@@ -613,7 +618,10 @@ function pinRefusal(session: CallSession, input: Record<string, unknown>): strin
 onLiveOwnerCall((text) => {
   for (const s of sessions.values()) {
     if (s.isCommandMode && s.pinOk && !s.ended && s.agentWs?.readyState === WebSocket.OPEN) {
-      s.agentWs.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
+      const ws = s.agentWs;
+      if (s.language === 'fr') {
+        frenchSpeech(text).then((fr) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: fr }))).catch(() => {});
+      } else ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
       return true;
     }
   }
@@ -627,7 +635,13 @@ function sendFunctionResponse(
   output: string
 ): void {
   if (session.agentWs?.readyState !== WebSocket.OPEN) return;
-  if (clientSide) {
+  if (clientSide && session.language === 'fr') {
+    // Said word for word, by a French voice: say it in French.
+    const ws = session.agentWs;
+    frenchSpeech(output).then((fr) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: fr }));
+    }).catch(() => {});
+  } else if (clientSide) {
     session.agentWs.send(JSON.stringify({ type: 'InjectAgentMessage', message: output }));
   } else {
     session.agentWs.send(JSON.stringify({ type: 'FunctionCallResponse', function_call_id: functionCallId, output }));
