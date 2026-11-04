@@ -199,9 +199,20 @@ describe('text: "it\'s Hussein"', () => {
 });
 
 describe('summary: his admin calls are not messages', () => {
+  it('an unverified "it\'s Hussein" call is still summarised to him (no hiding a call behind his name)', async () => {
+    const { s } = await strangerCall();
+    await say(s, "It's Hussein");
+    h.agents[1].close();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.ended).toBe(true);
+    expect(h.db.summaryClaimed).toEqual([]);
+    expect(h.db.updateCallLog).not.toContainEqual(expect.objectContaining({ reasonForCall: 'Voice commands' }));
+  });
+
   it('ending an admin call claims the summary, so no "new message" text goes out', async () => {
     const { s } = await strangerCall();
     await say(s, "It's Hussein");
+    s.pinOk = true; // he gave his PIN
     h.agents[1].close(); // the live agent hangs up: the call ends
     await new Promise((r) => setTimeout(r, 0));
     expect(s.ended).toBe(true);

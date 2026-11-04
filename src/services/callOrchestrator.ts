@@ -649,7 +649,9 @@ async function endCall(session: CallSession, status: string): Promise<void> {
   const durationSeconds = Math.round((Date.now() - session.startTime) / 1000);
 
   try {
-    if (session.isCommandMode) {
+    // Owner call = his own number, or "it's Hussein" plus the right PIN. An unverified claim is
+    // still a stranger's call: he gets the summary, so nobody can hide a call by saying his name.
+    if (session.isCommandMode && (!session.ownerClaimed || session.pinOk)) {
       // Command mode: only update call log basics; no summary SMS to owner
       await updateCallLog(session.callId, {
         status,
