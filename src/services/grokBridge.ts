@@ -265,12 +265,16 @@ type Kind = 'work' | 'tutoring' | 'meeting' | 'class' | 'appointment' | 'busy';
 const KIND_WORDS: Record<Kind, string> = {
   work: 'at work', tutoring: 'tutoring', meeting: 'in meetings', class: 'in class', appointment: 'at an appointment', busy: 'busy',
 };
+const KIND_WORDS_FR: Record<Kind, string> = {
+  work: 'au travail', tutoring: 'en tutorat', meeting: 'en réunion', class: 'en cours', appointment: 'à un rendez-vous', busy: 'occupé',
+};
 interface Block { start: number; end: number; kind: Kind; joined: boolean }
 
 const minutes = (t: unknown) => {
   const m = typeof t === 'string' && t.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
+const heureFr = (min: number) => `${Math.floor(min / 60)} h${min % 60 ? ` ${String(min % 60).padStart(2, '0')}` : ''}`;
 const spokenTime = (min: number) => {
   const h = Math.floor(min / 60) % 12 || 12;
   const m = min % 60;
@@ -298,8 +302,9 @@ export function parseDayBlocks(reply: string | null): Block[] | 'not-covered' | 
 
 /** "That day he's at work from 9 to 5, then tutoring from 5 to 7:45, back to back. He's free after 7:45."
  *  Same-kind blocks with at most 15 minutes between them merge into one ("back to back"). */
-export function describeDay(blocks: Block[]): string {
-  if (!blocks.length) return 'He looks free that day!';
+export function describeDay(blocks: Block[], lang = 'en'): string {
+  const fr = lang === 'fr';
+  if (!blocks.length) return fr ? "Il a l'air libre toute la journée!" : 'He looks free that day!';
   const merged: Block[] = [];
   for (const b of blocks) {
     const last = merged[merged.length - 1];
@@ -308,28 +313,38 @@ export function describeDay(blocks: Block[]): string {
       last.joined = true;
     } else merged.push({ ...b });
   }
+  const lastEnd = merged[merged.length - 1].end;
+  if (fr) {
+    const parts = merged.map((b, i) => {
+      const gap = i > 0 && b.start - merged[i - 1].end >= 30 ? `libre de ${heureFr(merged[i - 1].end)} à ${heureFr(b.start)}, puis ` : '';
+      return `${gap}${KIND_WORDS_FR[b.kind]} de ${heureFr(b.start)} à ${heureFr(b.end)}${b.joined ? ', sans pause' : ''}`;
+    });
+    const apres = lastEnd < 22 * 60 ? ` Il est libre après ${heureFr(lastEnd)}.` : '';
+    return `Ce jour-là, il est ${parts.join(', puis ')}.${apres}`;
+  }
   const parts = merged.map((b, i) => {
     const gap = i > 0 && b.start - merged[i - 1].end >= 30 ? `free from ${spokenTime(merged[i - 1].end)} to ${spokenTime(b.start)}, then ` : '';
     return `${gap}${KIND_WORDS[b.kind]} from ${spokenTime(b.start)} to ${spokenTime(b.end)}${b.joined ? ', back to back' : ''}`;
   });
-  const lastEnd = merged[merged.length - 1].end;
   const after = lastEnd < 22 * 60 ? ` He's free after ${spokenTime(lastEnd)}.` : '';
   return `That day he's ${parts.join(', then ')}.${after}`;
 }
 
 const NO_CALENDAR = "I don't have his calendar for that day yet, but I'll check with him and he'll get back to you!";
+const NO_CALENDAR_FR = "Je n'ai pas encore son agenda pour ce jour-là, mais je vérifie avec lui et il vous revient!";
 
 /** check_availability for callers: what kind of thing fills that day and when, never who or where.
  *  The sentence is built here from validated times and fixed words, so no schedule text (student
  *  names, places) can reach a caller, however the question was phrased. */
-export async function availabilityAnswer(when: string, now = new Date()): Promise<string> {
+export async function availabilityAnswer(when: string, now = new Date(), lang = 'en'): Promise<string> {
+  const none = lang === 'fr' ? NO_CALENDAR_FR : NO_CALENDAR;
   const snap = await getPrisma().daySnapshot.findUnique({ where: { id: 'today' } });
-  if (!snap) return NO_CALENDAR;
+  if (!snap) return none;
   const today = nowIn(now, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   const sent = nowIn(snap.updatedAt, { weekday: 'long', month: 'long', day: 'numeric' });
   const blocks = parseDayBlocks(await haiku(AVAILABILITY_PROMPT,
     `Now: ${today}. The caller asked about: ${when.slice(0, 200)}.\nHis schedule (sent ${sent}):\n${snap.text}`, 6000));
-  return blocks === null || blocks === 'not-covered' ? NO_CALENDAR : describeDay(blocks);
+  return blocks === null || blocks === 'not-covered' ? none : describeDay(blocks, lang);
 }
 
 // ── Owner identity and texts ─────────────────────────────────────────────────
