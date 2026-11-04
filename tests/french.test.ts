@@ -19,6 +19,9 @@ const h = vi.hoisted(() => {
   return h;
 });
 vi.mock('ws', () => ({ WebSocket: h.FakeWs, default: h.FakeWs }));
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: class { messages = { create: async () => ({ content: [{ type: 'text', text: 'Quel est ton NIP?' }] }) }; },
+}));
 vi.mock('../src/services/database', () => ({
   getPrisma: () => ({}),
   addTranscript: async () => {},
@@ -95,6 +98,33 @@ describe('call: the caller switches to French', () => {
     expect(s.transcriptParts.length).toBe(before);
     await say(s, 'user', 'Merci, à bientôt!');
     expect(h.agents).toHaveLength(2);
+  });
+
+  it('on his own phone (admin mode) too: French owner agent, and fixed lines are said in French', async () => {
+    const s = await strangerCall();
+    s.isCommandMode = true; // a call from his own number
+    await say(s, 'user', 'Oui bonjour, est-ce que tu parles français?');
+    expect(h.agents).toHaveLength(2);
+    const settings = h.agents[1].settings();
+    expect(settings.agent.speak.provider.model).toBe('aura-2-agathe-fr');
+    expect(settings.agent.think.prompt).toMatch(/speak only French/);
+    expect(settings.agent.think.functions.map((f: { name: string }) => f.name)).toContain('relay_to_bot');
+    expect(settings.agent.context.messages[0].content).toBe('Hi Hussein, what can I do for you?'); // what he heard
+
+    const { handleAgentEvent } = await import('../src/services/callOrchestrator');
+    handleAgentEvent(s, { type: 'FunctionCallRequest', functions: [{ id: 'f1', name: 'relay_to_bot', arguments: '{"command":"dis bonjour"}', client_side: true }] });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.agents[1].sent.map((m) => JSON.parse(m))).toContainEqual({ type: 'InjectAgentMessage', message: 'Quel est ton NIP?' });
+  });
+
+  it("a French caller who then says \"c'est Hussein\" gets the owner agent in French", async () => {
+    const s = await strangerCall();
+    await say(s, 'user', 'Bonjour, je voudrais laisser un message.');
+    await say(s, 'user', "Non attends, c'est Hussein.");
+    expect(h.agents).toHaveLength(3);
+    const settings = h.agents[2].settings();
+    expect(settings.agent.speak.provider.model).toBe('aura-2-agathe-fr');
+    expect(settings.agent.greeting).toBe("Salut Hussein, qu'est-ce que je peux faire pour toi?");
   });
 
   it('a saved French contact is already in French: no switch', async () => {

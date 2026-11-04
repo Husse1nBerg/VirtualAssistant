@@ -29,6 +29,7 @@ const cases: [string, unknown][] = [
   ['caller / unknown (Claude think)', buildAgentSettingsWithClaude(key, 'x')],
   ['command mode (OpenAI think)', buildCommandAgentSettings(key)],
   ['command mode (Claude think)', buildCommandAgentSettingsWithClaude(key, 'x')],
+  ['command mode in French (Claude think)', buildCommandAgentSettingsWithClaude(key, 'x', 'fr')],
   // "It's Hussein" mid-call swaps: the new agent speaks first (agent.greeting), no replayed history.
   ['mid-call owner switch (OpenAI think)', claimedOwnerSettings(speakingFirst(buildCommandAgentSettings(key), COMMAND_GREETING))],
   ['mid-call owner switch (Claude think)', claimedOwnerSettings(speakingFirst(buildCommandAgentSettingsWithClaude(key, 'x'), COMMAND_GREETING))],
