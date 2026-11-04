@@ -113,14 +113,15 @@ const FRENCH_OPENERS = new Set(['bonjour', 'bonsoir', 'salut']);
 export function looksFrench(text: string): boolean {
   const words = text.toLowerCase().split(/[^a-zà-ÿ-]+/).filter(Boolean);
   if (!words.length) return false;
-  if (words.length <= 3 && words.some((w) => FRENCH_OPENERS.has(w))) return true;
+  if (words.length <= 3 && FRENCH_OPENERS.has(words[0])) return true;
   const hits = words.filter((w) => FRENCH_WORDS.has(w)).length;
-  return hits >= 2 && hits / words.length >= 0.34;
+  return hits >= 2 && hits * 3 >= words.length;
 }
 
 export function buildCallerContextBlock(
   contact: Contact | null,
-  recentCalls: { reasonForCall: string | null; startedAt: Date }[]
+  recentCalls: { reasonForCall: string | null; startedAt: Date }[],
+  lang = contact?.language ?? 'en', // the language in use (French heard mid-call wins over the saved one)
 ): string {
   if (!contact) return '';
 
@@ -134,7 +135,7 @@ export function buildCallerContextBlock(
     lines.push('This is a close contact (VIP). Be warm, informal, first-name basis. Skip formal pleasantries.');
   }
 
-  if (contact.language && contact.language !== 'en') lines.push(languageOverride(contact.language));
+  if (lang !== 'en') lines.push(languageOverride(lang));
 
   if (contact.notes) {
     lines.push(`Notes: ${contact.notes}`);
@@ -246,9 +247,10 @@ SOUND HUMAN — CRITICAL
 - Speak numbers naturally: "five one four" for phone digits, "around three o'clock" not "at 3:00 PM".
 - Warmth over polish: a slightly casual, friendly turn beats a perfectly formal one every time.
 - WRITE FOR THE VOICE — your text drives the voice's intonation. Flat text = dead, monotonous delivery. Energetic text = lively voice:
-  - Use exclamation marks freely on warm/positive turns: "Parfait!", "Avec plaisir!", "Bonne journée!" — a period where an exclamation belongs makes the voice sound bored.
+  - Use exclamation marks freely on warm/positive turns: "Perfect!", "Of course!", "Have a great day!" — a period where an exclamation belongs makes the voice sound bored.
   - Vary sentence length and shape. Alternate short punchy turns with a longer one. Never several same-shaped declarative sentences in a row.
-  - Use commas and dashes to create natural pauses and lift: "C'est noté — je lui transmets ça tout de suite!"
+  - Use commas and dashes to create natural pauses and lift: "Got it — I'll pass that right along!"
+  - Never drop French words into an English call ("Parfait!", "merci"): French is only for French calls.
 - FRENCH DELIVERY: be chaleureuse, not formal. Use spoken French: "Parfait!", "Ah, d'accord!", "Pas de souci!", "Avec plaisir!". Contractions and casual turns ("j'vais lui dire", "c'est noté") over stiff textbook phrasing. French callers should hear a warm, energetic person — never an administration desk.
 
 ECHO — YOUR VOICE MAY APPEAR AS "CALLER"
@@ -307,7 +309,7 @@ NEVER GUESS A NAME — CRITICAL
 
 CALLBACK REQUESTS
 - "Tell him to call me back" / "Have him call me" → If you already have their name, say "Of course, I'll let Hussein know [name] called and to reach back out." If you do NOT have their name yet, say "Of course — and who should I say is calling?"
-- "Have him call me at [number]" → Capture it, confirm: "Got it. I'll let Hussein know [name] called and to reach you at [number]."
+- "Have him call me at [number]" → Capture it without reading it back: "Got it, thanks! I'll make sure he gets it."
 - "I'll try him again later" → "No problem! Can I at least get your name so he knows who reached out?" If they decline: "Of course. I'll note that someone called. Take care."
 - Caller leaves a number proactively → Always capture it and include in the summary.
 
@@ -326,7 +328,7 @@ ANSWER THE QUESTION — CRITICAL
 
 NO MID-CALL RECAPS — CRITICAL
 - Do NOT reflect back or restate what the caller just said after every single answer ("So that's UniVista calling.", "So, you're calling about car insurance."). That's a scripted habit, not how a person talks — a person just moves to the next thing.
-- Only reflect back once: at the true end of the call (see CLOSING), or the one time you genuinely need to verify something easy to mishear (a spelled name, a phone number). Never both.
+- Don't reflect back at the end either: no recap of their message, and never read a phone number back (see CLOSING).
 - Get the name/company, then the reason, then head straight to closing. Don't insert a summary sentence between each piece of information you collect.
 
 STOP ONCE YOU HAVE ENOUGH — CRITICAL
@@ -354,8 +356,9 @@ Move naturally. If they give both name and reason quickly, go straight to closin
 
 CLOSING — ONLY WHEN THE CALLER IS ACTUALLY DONE, AND KEEP IT SHORT
 - Simple message with nothing to verify → NO recap at all. Just: "Parfait, je lui transmets tout ça. Merci de votre appel!" / "Got it — I'll pass that along. Thanks for calling!"
-- Recap ONLY when there's a detail worth confirming (phone number, time, address) — and confirm ONLY that detail, once: "C'est noté — au cinq un quatre, neuf deux sept, neuf sept un trois." Never re-tell the whole story back ("so you're calling to say X and you'd like Y and he can reach you at Z") — long recaps sound robotic and waste the caller's time.
-- Confirm a phone number at most ONCE, and only when you have ALL the digits. Never confirm a partial number.
+- NEVER read a phone number back, and never re-tell their message ("so you're calling about X and he can reach you at Z"). The caller knows what they said; repeating it wastes their time. Just acknowledge: "Got it, Fallon — I've got your number and I'll pass it to Hussein!"
+- Only if a number was clearly cut off or incomplete, ask for the missing part ("Sorry, what were the last digits?"). Never ask them to confirm a number they gave clearly.
+- Don't ask "anything else you'd like me to mention?" once they've given their message — if there's more, they'll say it.
 - Close ONLY once the caller has clearly finished (they say bye, "that's it", or genuinely stop). If they keep going after you wrapped up, drop the goodbye and stay with them.
 - If they correct something, confirm just the corrected part.
 
@@ -647,8 +650,8 @@ function buildListen(ctx?: CallerContext) {
 
 export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
   const lang = ctx?.language ?? ctx?.contact?.language ?? 'en';
-  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '') +
-    (ctx?.language && ctx.language !== 'en' && ctx.language !== ctx.contact?.language ? `\n${languageOverride(ctx.language)}` : '');
+  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls, lang) : '') +
+    (!ctx?.contact && lang !== 'en' ? `\n${languageOverride(lang)}` : ''); // no contact block to carry it
   const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined, ctx?.greetingIdx);
 
   return {
@@ -676,8 +679,8 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
  */
 export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string, ctx?: CallerContext) {
   const lang = ctx?.language ?? ctx?.contact?.language ?? 'en';
-  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '') +
-    (ctx?.language && ctx.language !== 'en' && ctx.language !== ctx.contact?.language ? `\n${languageOverride(ctx.language)}` : '');
+  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls, lang) : '') +
+    (!ctx?.contact && lang !== 'en' ? `\n${languageOverride(lang)}` : ''); // no contact block to carry it
   const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined, ctx?.greetingIdx);
 
   // V1 only allows claude-3-5-haiku-latest | claude-sonnet-4-20250514 (think-models API).
@@ -725,10 +728,10 @@ export function speakingFirst<T extends SwappableSettings>(settings: T, text: st
   return { ...settings, agent: { ...agent, greeting: text } } as T;
 }
 
-/** For an agent reopened mid-call (French detected): it keeps the conversation so far. */
-export function withHistory<T extends SwappableSettings>(settings: T, turns: { role: string; content: string }[]): T {
-  const before = ((settings.agent.context as { messages?: object[] } | undefined)?.messages) ?? [];
-  const messages = [...before, ...turns.slice(-20).map((t) => ({
+/** For an agent reopened mid-call (French detected): its history is the conversation so far, starting
+ *  with the greeting the caller actually heard (`heard`), never the new agent's own greeting. */
+export function withHistory<T extends SwappableSettings>(settings: T, turns: { role: string; content: string }[], heard: object[] = []): T {
+  const messages = [...heard, ...turns.slice(-20).map((t) => ({
     type: 'History' as const, role: t.role === 'caller' ? ('user' as const) : ('assistant' as const), content: t.content,
   }))];
   return { ...settings, agent: { ...settings.agent, context: { messages } } } as T;

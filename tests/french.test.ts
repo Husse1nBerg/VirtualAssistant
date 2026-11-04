@@ -59,7 +59,8 @@ describe('French is detected from what the caller says', () => {
     const { looksFrench } = await import('../src/services/agentPrompt');
     for (const t of ['Oui, je dois.', 'Bonjour!', "Je voudrais laisser un message pour Hussein", "C'est Abed, est-ce qu'il est disponible jeudi?"])
       expect(looksFrench(t), t).toBe(true);
-    for (const t of ['Hi, is Hussein available?', 'Merci', 'Le Château restaurant at six', 'OK, sounds good', 'I want to have dinner with my son'])
+    expect(looksFrench('je need to speak with vous')).toBe(true); // exactly one third
+    for (const t of ['Hi, is Hussein available?', 'Merci', 'Le Château restaurant at six', 'OK, sounds good', 'I want to have dinner with my son', 'okay bonjour there'])
       expect(looksFrench(t), t).toBe(false);
   });
 });
@@ -81,6 +82,8 @@ describe('call: the caller switches to French', () => {
     expect(settings.agent.listen.provider.language_hints[0]).toBe('fr');
     expect(settings.agent.think.prompt).toContain('LANGUAGE OVERRIDE');
     const history = settings.agent.context.messages.map((m: { content: string }) => m.content);
+    const { GREETINGS } = await import('../src/services/agentPrompt');
+    expect(GREETINGS).toContain(history[0]); // the English greeting he heard, not a made-up French one
     expect(history).toContain('Hello, is Hussein there?');
     expect(history).not.toContain('Oui, je voudrais laisser un message pour lui.'); // re-sent instead
 
@@ -99,6 +102,15 @@ describe('call: the caller switches to French', () => {
     s.callerCtx = { contact: { name: 'Nada', language: 'fr', isVip: false }, recentCalls: [] };
     await say(s, 'user', 'Oui, je voudrais laisser un message.');
     expect(h.agents).toHaveLength(1);
+  });
+
+  it('a contact saved in another language who speaks French gets one language rule: French', async () => {
+    const s = await strangerCall();
+    s.callerCtx = { contact: { name: 'Rania', language: 'ar', isVip: false }, recentCalls: [] };
+    await say(s, 'user', 'Bonjour, je voudrais parler à Hussein.');
+    const prompt: string = h.agents[1].settings().agent.think.prompt;
+    expect(prompt.match(/preferred language is/g)).toHaveLength(1); // one rule, not Arabic AND French
+    expect(prompt).toMatch(/preferred language is French/);
   });
 
   it('availability answers come in French for a French caller', async () => {

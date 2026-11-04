@@ -298,8 +298,10 @@ export function switchToFrench(session: CallSession, said: string): void {
     session.twilioWs.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
   }
   const old = session.agentWs;
+  // History = the greeting the caller actually heard (from the original settings) + the turns so far.
+  const heard = (strangerSettings({ ...session.callerCtx, language: undefined }).agent as { context?: { messages?: object[] } }).context?.messages ?? [];
   const history = session.transcriptParts.slice(0, -1); // the last line is what we re-send below
-  openAgent(session, withHistory(strangerSettings(session.callerCtx), history), (ws) => {
+  openAgent(session, withHistory(strangerSettings(session.callerCtx), history, heard), (ws) => {
     session.injected = said;
     ws.send(JSON.stringify({ type: 'InjectUserMessage', content: said }));
   });
