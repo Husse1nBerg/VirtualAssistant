@@ -23,7 +23,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
-import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, BridgeError } from './grokBridge';
+import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, BridgeError } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -273,7 +273,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
       // His answer right after Sky asked for the PIN or passphrase is checked from his own words, not
       // from what the AI passes on (on real calls it judged a correct PIN wrong without asking).
       // Same gate as a function call: exact match, counted per call and per hour.
-      if (role === 'user' && session.isCommandMode && !session.pinOk && session.awaitingPin) {
+      if (role === 'user' && session.isCommandMode && !session.pinOk && session.awaitingPin && looksLikeSecret(raw)) {
         if (!pinRefusal(session, { pin: raw })) session.awaitingPin = false;
       }
 

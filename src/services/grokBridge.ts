@@ -289,6 +289,21 @@ function secretMatches(given: unknown): boolean {
   return pinDigits(said) === getEnv().OWNER_PIN.replace(/\D/g, '');
 }
 
+/** Is this utterance an attempt at the secret (so it should be checked and counted), or just
+ *  talk ("can you repeat that?", a new command)? Talk is left alone so it never burns a try. */
+export function looksLikeSecret(text: string): boolean {
+  const words = normalizePhrase(text).split(' ').filter(Boolean);
+  const phrase = ownerPhrase();
+  if (phrase) {
+    // Decided without looking at the passphrase's words (that would leak them): a short answer
+    // that is not a question and does not start like a command or request.
+    const talk = /^(?:ok|okay|so|and|then|tell|ask|connect|send|text|call|can|could|what|why|how|please|repeat|wait|hold)$/;
+    return words.length >= 1 && words.length <= phrase.split(' ').length + 2 && !/\?\s*$/.test(text) && !talk.test(words[0]);
+  }
+  const nonNumberWords = words.filter((w) => !/^\d+$/.test(w) && !(w in DIGIT_WORDS));
+  return pinDigits(text).length >= 4 && nonNumberWords.length <= 4;
+}
+
 /** A text that starts with the PIN or passphrase: returns it and the command after it. */
 function splitLeadingSecret(body: string): { secret: string; rest: string } | null {
   const phrase = ownerPhrase();
