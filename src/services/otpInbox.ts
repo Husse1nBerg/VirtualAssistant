@@ -4,45 +4,60 @@
  *   iPhone Shortcuts ("When I get a message containing 'code'") -> POST /connector/sms-code
  *   Grok Bot -> connector tool get_latest_code -> the code, once
  *
- * Codes are second factors, so: memory only (never the database, never logs), gone after
- * 10 minutes, each readable once, and Hussein gets a text every time one is read.
+ * Codes are second factors, so: memory only (never the database, never logs), deleted when read
+ * or after 10 minutes, and Hussein gets a text every time one is read.
  */
 
 const TTL_MS = 10 * 60_000;
 const MAX_KEPT = 20;
 
 // `text`: the start of the message, so a filter like "amazon" works when the sender is a short code.
-interface Code { from: string; text: string; code: string; at: number; read: boolean }
+export interface Code { from: string; text: string; code: string; at: number }
 // ponytail: in memory, single instance; a restart drops pending codes, which simply expire anyway.
-const inbox: Code[] = [];
+let inbox: Code[] = [];
+const prune = (now: number) => { inbox = inbox.filter((c) => now - c.at < TTL_MS); };
 
-/** "123456", "123-456", "123 456" or "G-123456"; null if the text holds no code. */
+const CANDIDATE = /(?<![\d-])(\d{3})[- ](\d{3})(?![\d-])|(?<!\d)(\d{4,8})(?!\d)/g;
+const OTP_WORDS = /\b(?:code|codes|otp|pin|passcode|verification|verify|password|token)\b/gi;
+
+/** The one-time code in a text: "123456", "123-456", "123 456" or "G-123456". With several numbers
+ *  (an order number and a code), the one closest to a word like "code" or "OTP" wins; if it is
+ *  still unclear, null rather than a wrong guess. */
 export function extractCode(text: string): string | null {
-  const split = text.match(/(?<![\d-])(\d{3})[- ](\d{3})(?![\d-])/);
-  if (split) return split[1] + split[2];
-  return text.match(/(?<!\d)\d{4,8}(?!\d)/)?.[0] ?? null;
+  const nums = [...text.matchAll(CANDIDATE)].map((m) => ({ code: m[3] ?? m[1] + m[2], at: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+  if (nums.length <= 1) return nums[0]?.code ?? null;
+  const words = [...text.matchAll(OTP_WORDS)].map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+  if (!words.length) return null;
+  // Characters between the number and the word, whichever side it is on ("code is 482913", "482913 is your code").
+  const dist = (n: { at: number; end: number }) => Math.min(...words.map((w) => (w.start >= n.end ? w.start - n.end : Math.max(0, n.at - w.end))));
+  const ranked = nums.map((n) => ({ ...n, d: dist(n) })).sort((a, b) => a.d - b.d);
+  return ranked[0].d < ranked[1].d && ranked[0].d <= 40 ? ranked[0].code : null;
 }
 
-/** A forwarded text. Returns whether it held a code (only codes are kept, not the message). */
+/** A forwarded text. Returns whether it held a code (only texts with a code are kept). */
 export function addMessage(from: string, text: string, now = Date.now()): boolean {
+  prune(now);
   const code = extractCode(text);
   if (!code) return false;
-  inbox.push({ from: from.trim().slice(0, 60) || 'unknown', text: text.trim().slice(0, 160), code, at: now, read: false });
+  inbox.push({ from: from.trim().slice(0, 60) || 'unknown', text: text.trim().slice(0, 160), code, at: now });
   while (inbox.length > MAX_KEPT) inbox.shift();
   return true;
 }
 
-/** Unread codes from the last 10 minutes, newest first, optionally only from a matching sender.
- *  Reading marks them read: a code is handed out once. */
-export function takeCodes(filter = '', now = Date.now()): { from: string; message: string; code: string; secondsAgo: number }[] {
+/** Codes from the last 10 minutes, newest first, optionally only those matching a sender or word.
+ *  They are removed: a code is handed out once (putBack undoes it if the hand-out fails). */
+export function takeCodes(filter = '', now = Date.now()): Code[] {
+  prune(now);
   const want = filter.trim().toLowerCase();
-  const fresh = inbox
-    .filter((c) => !c.read && now - c.at < TTL_MS && (!want || `${c.from} ${c.text}`.toLowerCase().includes(want)))
-    .sort((a, b) => b.at - a.at);
-  for (const c of fresh) c.read = true;
-  return fresh.map((c) => ({ from: c.from, message: c.text, code: c.code, secondsAgo: Math.round((now - c.at) / 1000) }));
+  const taken = inbox.filter((c) => !want || `${c.from} ${c.text}`.toLowerCase().includes(want));
+  inbox = inbox.filter((c) => !taken.includes(c));
+  return taken.sort((a, b) => b.at - a.at);
+}
+
+export function putBack(codes: Code[]): void {
+  inbox.push(...codes);
 }
 
 export function clearCodesForTests(): void {
-  inbox.length = 0;
+  inbox = [];
 }

@@ -69,6 +69,12 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 });
 
+// The phone's secret must differ from Grok's, or Grok's credential could also plant codes.
+const checkedEnvSchema = envSchema.refine(
+  (e) => !e.SMS_FORWARD_SECRET || e.SMS_FORWARD_SECRET !== e.BOT_CONNECTOR_SECRET,
+  { message: 'SMS_FORWARD_SECRET must be different from BOT_CONNECTOR_SECRET', path: ['SMS_FORWARD_SECRET'] },
+);
+
 export type Env = z.infer<typeof envSchema>;
 
 let _env: Env | null = null;
@@ -76,7 +82,7 @@ let _env: Env | null = null;
 export function loadEnv(): Env {
   if (_env) return _env;
 
-  const result = envSchema.safeParse(process.env);
+  const result = checkedEnvSchema.safeParse(process.env);
 
   if (!result.success) {
     console.error('❌ Invalid environment variables:');

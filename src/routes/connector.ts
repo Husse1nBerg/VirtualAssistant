@@ -15,7 +15,7 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { deliverReply, textOwner, setSchedule, pendingRequests } from '../services/grokBridge';
 import { hostPhotos, getPhoto, PhotoError, MAX_PHOTOS } from '../services/mediaStore';
-import { addMessage, takeCodes } from '../services/otpInbox';
+import { addMessage, takeCodes, putBack } from '../services/otpInbox';
 
 const router = Router();
 
@@ -111,8 +111,16 @@ export function buildConnectorServer(): McpServer {
       const codes = takeCodes(from ?? '');
       if (!codes.length) return text('No new one-time code in the last 10 minutes. Wait a few seconds after the site sends it, then try again.');
       const sources = [...new Set(codes.map((c) => c.from))].join(', ');
-      textOwner(`Sky: Grok Bot just read your one-time code (from ${sources}). If that wasn't you, secure that account.`).catch(() => {});
-      return text(JSON.stringify(codes));
+      // Hussein is always told: no alert, no code (it stays for the next try).
+      try {
+        await textOwner(`Sky: Grok Bot just read your one-time code (from ${sources}). If that wasn't you, secure that account.`);
+      } catch (err) {
+        putBack(codes);
+        getLogger().error({ err }, 'One-time code: could not alert Hussein, code kept back');
+        return { ...text('Could not notify Hussein, so the code was not released. Try again in a moment.'), isError: true };
+      }
+      const now = Date.now();
+      return text(JSON.stringify(codes.map((c) => ({ from: c.from, message: c.text, code: c.code, secondsAgo: Math.round((now - c.at) / 1000) }))));
     },
   );
 

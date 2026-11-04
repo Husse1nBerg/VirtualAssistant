@@ -3,8 +3,13 @@ import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 
 const texts: string[] = [];
+const twilio = { failNext: false };
 vi.mock('../src/services/twilioClient', () => ({
-  getTwilioClient: () => ({ messages: { create: async ({ body }: { body: string }) => { texts.push(body); return { sid: 'SM1' }; } } }),
+  getTwilioClient: () => ({ messages: { create: async ({ body }: { body: string }) => {
+    if (twilio.failNext) { twilio.failNext = false; throw new Error('twilio down'); }
+    texts.push(body);
+    return { sid: 'SM1' };
+  } } }),
 }));
 vi.mock('../src/services/database', () => ({ getPrisma: () => ({}) }));
 
@@ -58,6 +63,8 @@ describe('one-time codes from his iPhone', () => {
     expect(extractCode('Your code: 123-456')).toBe('123456');
     expect(extractCode('Use 9081 to sign in')).toBe('9081');
     expect(extractCode('Your package is on its way')).toBeNull();
+    expect(extractCode('Amazon order 12345678: your code is 482913')).toBe('482913'); // not the order number
+    expect(extractCode('Call 5145551234 or 4382221111 today')).toBeNull(); // can't tell which: no guess
   });
 
   it("only his phone can forward: wrong secret 401, Grok's secret is not enough", async () => {
@@ -75,6 +82,13 @@ describe('one-time codes from his iPhone', () => {
     expect(await getCode('amazon')).toMatch(/^No new one-time code/); // read once
   });
 
+  it('if the alert to Hussein fails, Grok gets no code and it stays for the next try', async () => {
+    await forward({ from: 'Bank', text: 'Your code is 777333' });
+    twilio.failNext = true;
+    expect(await getCode('bank')).toMatch(/^Could not notify Hussein/);
+    expect(JSON.parse(await getCode('bank'))[0].code).toBe('777333');
+  });
+
   it('plain-text forwards work too, texts without a code are dropped, and codes expire after 10 minutes', async () => {
     expect(await (await forward('Your Uber code: 5521')).json()).toEqual({ ok: true, kept: true });
     expect(await (await forward({ text: 'Lunch at 1?' })).json()).toEqual({ ok: true, kept: false });
@@ -82,5 +96,6 @@ describe('one-time codes from his iPhone', () => {
     addMessage('Bank', 'Your code is 999111', Date.now() - 11 * 60_000);
     expect(takeCodes('bank')).toEqual([]);
     expect(takeCodes('uber')[0].code).toBe('5521');
+    expect(takeCodes('uber')).toEqual([]); // taken codes are gone, not just flagged
   });
 });

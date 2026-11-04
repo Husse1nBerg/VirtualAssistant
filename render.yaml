@@ -51,6 +51,8 @@ services:
         sync: false
       - key: BOT_CONNECTOR_SECRET
         sync: false
+      - key: SMS_FORWARD_SECRET # iPhone code forwarding; 32+ chars, different from BOT_CONNECTOR_SECRET
+        sync: false
       - key: OWNER_PIN
         sync: false
       - key: OWNER_TIMEZONE
