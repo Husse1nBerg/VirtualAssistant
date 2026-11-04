@@ -173,8 +173,8 @@ export async function textOwner(message: string, photos: string[] = []): Promise
 }
 
 // The call orchestrator registers how to speak to Hussein if he's on a call (avoids an import cycle).
-let _sayOnLiveCall: ((text: string) => boolean) | null = null;
-export function onLiveOwnerCall(fn: (text: string) => boolean): void {
+let _sayOnLiveCall: ((text: string) => boolean | Promise<boolean>) | null = null;
+export function onLiveOwnerCall(fn: (text: string) => boolean | Promise<boolean>): void {
   _sayOnLiveCall = fn;
 }
 
@@ -186,7 +186,7 @@ export async function deliverReply(requestId: string, message: string, photos: s
   await prisma.botRequest.update({ where: { id: requestId }, data: { status: 'done', reply: message, repliedAt: new Date() } });
   const line = `${request.botName}: ${message}`;
   const shown = photos.length ? ` I texted you ${photos.length === 1 ? 'the photo' : `${photos.length} photos`}.` : '';
-  const spoken = _sayOnLiveCall?.(`Update from ${line}${shown}`) ?? false;
+  const spoken = (await _sayOnLiveCall?.(`Update from ${line}${shown}`)) ?? false;
   await textOwner(line, photos);
   getLogger().info({ requestId, bot: request.botName, spoken }, 'Grok bridge: reply delivered');
   return spoken ? 'Delivered: texted to Hussein and told him on his call.' : 'Delivered: texted to Hussein.';

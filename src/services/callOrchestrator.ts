@@ -11,6 +11,8 @@ import {
   claimedOwnerSettings,
   COMMAND_GREETING,
   BACK_TO_MESSAGE_GREETING,
+  COMMAND_GREETING_FR,
+  BACK_TO_MESSAGE_GREETING_FR,
   withHistory,
   looksFrench,
 } from './agentPrompt';
@@ -278,9 +280,11 @@ export function switchAgent(session: CallSession, to: 'owner' | 'stranger'): voi
   if (session.twilioWs.readyState === WebSocket.OPEN) {
     session.twilioWs.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
   }
+  // Keep the call's language: a French caller who then says "c'est Hussein" stays in French.
+  const fr = (session.language ?? session.callerCtx?.language ?? session.callerCtx?.contact?.language) === 'fr';
   const settings = to === 'owner'
-    ? claimedOwnerSettings(speakingFirst(ownerSettings(), COMMAND_GREETING))
-    : speakingFirst(strangerSettings(session.callerCtx), BACK_TO_MESSAGE_GREETING);
+    ? claimedOwnerSettings(speakingFirst(ownerSettings(fr ? 'fr' : 'en'), fr ? COMMAND_GREETING_FR : COMMAND_GREETING))
+    : speakingFirst(strangerSettings(session.callerCtx), fr ? BACK_TO_MESSAGE_GREETING_FR : BACK_TO_MESSAGE_GREETING);
   const old = session.agentWs;
   openAgent(session, settings);
   if (old && old.readyState !== WebSocket.CLOSED) old.close(1000, 'Switching agent');
@@ -619,10 +623,16 @@ onLiveOwnerCall((text) => {
   for (const s of sessions.values()) {
     if (s.isCommandMode && s.pinOk && !s.ended && s.agentWs?.readyState === WebSocket.OPEN) {
       const ws = s.agentWs;
-      if (s.language === 'fr') {
-        frenchSpeech(text).then((fr) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: fr }))).catch(() => {});
-      } else ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
-      return true;
+      if (s.language !== 'fr') {
+        ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: text }));
+        return true;
+      }
+      // Spoken only once translated and sent; if the call ended meanwhile, it was only texted.
+      return frenchSpeech(text).then((fr) => {
+        if (ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify({ type: 'InjectAgentMessage', message: fr }));
+        return true;
+      }).catch(() => false);
     }
   }
   return false;

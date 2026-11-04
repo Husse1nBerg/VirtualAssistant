@@ -117,6 +117,16 @@ describe('call: the caller switches to French', () => {
     expect(h.agents[1].sent.map((m) => JSON.parse(m))).toContainEqual({ type: 'InjectAgentMessage', message: 'Quel est ton NIP?' });
   });
 
+  it("a French caller who then says \"c'est Hussein\" gets the owner agent in French", async () => {
+    const s = await strangerCall();
+    await say(s, 'user', 'Bonjour, je voudrais laisser un message.');
+    await say(s, 'user', "Non attends, c'est Hussein.");
+    expect(h.agents).toHaveLength(3);
+    const settings = h.agents[2].settings();
+    expect(settings.agent.speak.provider.model).toBe('aura-2-agathe-fr');
+    expect(settings.agent.greeting).toBe("Salut Hussein, qu'est-ce que je peux faire pour toi?");
+  });
+
   it('a saved French contact is already in French: no switch', async () => {
     const s = await strangerCall();
     s.callerCtx = { contact: { name: 'Nada', language: 'fr', isVip: false }, recentCalls: [] };

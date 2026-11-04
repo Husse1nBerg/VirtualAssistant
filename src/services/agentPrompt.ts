@@ -717,6 +717,8 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
 
 export const COMMAND_GREETING = 'Hi Hussein, what can I do for you?';
 export const BACK_TO_MESSAGE_GREETING = 'No problem. What would you like me to pass along to Hussein?';
+export const COMMAND_GREETING_FR = "Salut Hussein, qu'est-ce que je peux faire pour toi?";
+export const BACK_TO_MESSAGE_GREETING_FR = "Pas de souci! Qu'est-ce que vous voulez que je transmette à Hussein?";
 
 // ── Mid-call switches ("it's Hussein" on a call from another phone) ──────────
 
