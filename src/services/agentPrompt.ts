@@ -489,7 +489,7 @@ const COMMAND_AGENT_PROMPT = `You are Hussein's voice command assistant. He is c
 
 You can:
 - Send a text: "Text [name or phone] [message]". Call the send_sms function with contact_name_or_phone (first name or full name from his contacts, or a phone number) and message. If he says "text John I'll be late" call send_sms with contact_name_or_phone "John" and message "I'll be late".
-- Questions about today ("what's my afternoon like?", "when's my next meeting?"): call get_today_schedule and answer from it in one or two sentences. If the answer isn't in it, offer to ask his bot.
+- Questions about his day or another day ("what's my afternoon like?", "am I free next Thursday at 6?"): call get_today_schedule, with day set when he asks about a day other than today. Its result is said to him as is. He is Hussein: "is Hussein free?" or "is he available?" on this call means him.
 - Anything for his Grok bots (planning, reminders, changing his schedule, research, "tell planner to move gym to 7", "ask grok what's on Friday"): call relay_to_bot. Put the bot's name in bot_name ONLY if he names one; otherwise leave it empty and it goes to his main bot, which hands it to the right sub-bot. Put only the task in command, without the bot's name or the words "tell" / "ask" (for "tell grok to say hello", command is "say hello").
 - Speech-to-text often mishears "Grok" as grab, grog, groc, El Groc, a grok, telegraph or Rock. When he seems to be addressing a bot, treat these as Grok and use the main bot.
 
@@ -516,10 +516,13 @@ export const COMMAND_FUNCTIONS = [
   },
   {
     name: 'get_today_schedule',
-    description: "Today's schedule as last reported by his bots. Use it to answer questions about his day.",
+    description: "His schedule as last reported by his bots (today and upcoming days). Use it to answer questions about his day or another day.",
     parameters: {
       type: 'object' as const,
-      properties: { pin: { type: 'string', description: 'His PIN, digits only, when Sky asks for it.' } },
+      properties: {
+        day: { type: 'string', description: 'Only when he asks about a day other than today, in his words (e.g. "next Thursday").' },
+        pin: { type: 'string', description: 'His PIN, digits only, when Sky asks for it.' },
+      },
     },
   },
   {
@@ -551,7 +554,16 @@ export const COMMAND_FUNCTIONS = [
 // Proper nouns most likely to be mis-transcribed, especially on accented speech.
 // Deepgram nova-3 keyterm prompting boosts recognition of these. Add brand/product
 // names, common contact names, etc. as needed — this is the main accent-accuracy lever.
-const STT_KEYTERMS = ['Hussein', 'Bayoun', 'Sky'];
+// Names speech-to-text should expect: his name as English, Arabic and French speakers say and spell
+// it ("Hussein" was heard as "Suzanne"), plus common Arabic names and their French spellings, since
+// many of his callers have them. ponytail: kept short; a long list makes STT "hear" names in ordinary words.
+const STT_KEYTERMS = [
+  'Hussein', 'Hussain', 'Husayn', 'Houssein', 'Hocine', 'Bayoun', 'Sky',
+  'Abed', 'Abdel', 'Abdul', 'Abdallah', 'Abdelkader', 'Ahmed', 'Ahmad', 'Mohamed', 'Mohammed', 'Mahmoud',
+  'Ali', 'Omar', 'Khaled', 'Khalil', 'Karim', 'Hassan', 'Ibrahim', 'Youssef', 'Mustafa', 'Mostafa',
+  'Samir', 'Walid', 'Nabil', 'Tarek', 'Rachid', 'Bilal', 'Jamal', 'Issam', 'Nada', 'Fatima', 'Mariam',
+  'Layla', 'Rania', 'Yasmine', 'Nour',
+];
 
 // Flux is Deepgram's STT model built specifically for voice agents, with model-integrated
 // end-of-turn detection (vs. nova-3, which exposes NO turn-detection tuning in the Agent
