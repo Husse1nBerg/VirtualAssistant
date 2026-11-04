@@ -84,7 +84,7 @@ export function buildConnectorServer(): McpServer {
     'set_today_schedule',
     {
       description:
-        "Replace Sky's copy of Hussein's schedule for today. Send the whole day, one item per line with times. Sky uses it to answer him instantly on calls and texts. Call it every morning and whenever today's plan changes.",
+        "Replace Sky's copy of Hussein's schedule: today plus the coming weeks (as far ahead as you know), one item per line with its date and times. Sky reads it to Hussein, and tells callers only whether he is free or busy at a time they ask about. Call it every morning and whenever his plans change.",
       inputSchema: { schedule: z.string().min(1).max(4000) },
     },
     async ({ schedule }) => {
