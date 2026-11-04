@@ -87,6 +87,35 @@ export interface CallerContext {
   /** Index into GREETINGS chosen at /voice/inbound time, so the agent's context
    *  matches the exact greeting audio the caller heard. */
   greetingIdx?: number;
+  /** Language heard mid-call (French detected): overrides the contact's saved language. */
+  language?: string;
+}
+
+function languageOverride(lang: string): string {
+  const langName = LANGUAGE_NAMES[lang] ?? lang;
+  return `LANGUAGE OVERRIDE: This caller's preferred language is ${langName}. ` +
+    `You MUST speak to them entirely in ${langName} for the whole call — ` +
+    `greetings, questions, summary, and closing. Do NOT use English.`;
+}
+
+// Common French words that are not also everyday English words (no "a", "on", "son"...).
+const FRENCH_WORDS = new Set([
+  'je', 'j', 'tu', 'vous', 'nous', 'il', 'elle', 'est', 'c', 'suis', 'oui', 'pas', 'pour', 'avec', 'mais',
+  'merci', 'bonjour', 'bonsoir', 'salut', 'le', 'les', 'des', 'une', 'du', 'au', 'aux', 'que', 'qui', 'quoi',
+  'ça', 'ca', 'mon', 'ma', 'mes', 'votre', 'vos', 'dans', 'très', 'aussi', 'voudrais', 'veux', 'peux',
+  'parler', 'rappeler', 'demain', 'aujourd', 'hui', 'cette', 'et', 'est-ce', 'dois', 'peut', 'être', 'été',
+  'disponible', 'libre', 'laisser', 'allo', 'allô',
+]);
+const FRENCH_OPENERS = new Set(['bonjour', 'bonsoir', 'salut']);
+
+/** Is the caller speaking French? Two or more French words making up a good share of what they said,
+ *  or an opening "bonjour". Never switches on a lone ambiguous word. */
+export function looksFrench(text: string): boolean {
+  const words = text.toLowerCase().split(/[^a-zà-ÿ-]+/).filter(Boolean);
+  if (!words.length) return false;
+  if (words.length <= 3 && words.some((w) => FRENCH_OPENERS.has(w))) return true;
+  const hits = words.filter((w) => FRENCH_WORDS.has(w)).length;
+  return hits >= 2 && hits / words.length >= 0.34;
 }
 
 export function buildCallerContextBlock(
@@ -105,14 +134,7 @@ export function buildCallerContextBlock(
     lines.push('This is a close contact (VIP). Be warm, informal, first-name basis. Skip formal pleasantries.');
   }
 
-  if (contact.language && contact.language !== 'en') {
-    const langName = LANGUAGE_NAMES[contact.language] ?? contact.language;
-    lines.push(
-      `LANGUAGE OVERRIDE: This caller's preferred language is ${langName}. ` +
-      `You MUST speak to them entirely in ${langName} for the whole call — ` +
-      `greetings, questions, summary, and closing. Do NOT use English.`
-    );
-  }
+  if (contact.language && contact.language !== 'en') lines.push(languageOverride(contact.language));
 
   if (contact.notes) {
     lines.push(`Notes: ${contact.notes}`);
@@ -609,7 +631,7 @@ function buildListen(ctx?: CallerContext) {
   const keyterms = name && name.length > 1
     ? Array.from(new Set([...STT_KEYTERMS, ...name.split(/\s+/)]))
     : STT_KEYTERMS;
-  const languageHints = ctx?.contact?.language === 'fr' ? ['fr', 'en'] : DEFAULT_LANGUAGE_HINTS;
+  const languageHints = (ctx?.language ?? ctx?.contact?.language) === 'fr' ? ['fr', 'en'] : DEFAULT_LANGUAGE_HINTS;
   return {
     provider: {
       type: 'deepgram' as const,
@@ -624,8 +646,9 @@ function buildListen(ctx?: CallerContext) {
 }
 
 export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext) {
-  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
-  const lang = ctx?.contact?.language ?? 'en';
+  const lang = ctx?.language ?? ctx?.contact?.language ?? 'en';
+  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '') +
+    (ctx?.language && ctx.language !== 'en' && ctx.language !== ctx.contact?.language ? `\n${languageOverride(ctx.language)}` : '');
   const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined, ctx?.greetingIdx);
 
   return {
@@ -652,8 +675,9 @@ export function buildAgentSettings(_deepgramApiKey: string, ctx?: CallerContext)
  * instead of OpenAI. Deepgram supports this natively.
  */
 export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicApiKey: string, ctx?: CallerContext) {
-  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '');
-  const lang = ctx?.contact?.language ?? 'en';
+  const lang = ctx?.language ?? ctx?.contact?.language ?? 'en';
+  const prompt = getAgentPrompt() + (ctx ? buildCallerContextBlock(ctx.contact, ctx.recentCalls) : '') +
+    (ctx?.language && ctx.language !== 'en' && ctx.language !== ctx.contact?.language ? `\n${languageOverride(ctx.language)}` : '');
   const greeting = getGreetingTextForLanguage(lang, ctx?.contact?.name ?? undefined, ctx?.greetingIdx);
 
   // V1 only allows claude-3-5-haiku-latest | claude-sonnet-4-20250514 (think-models API).
@@ -699,6 +723,15 @@ interface SwappableSettings { agent: { think: { prompt: string; functions: reado
 export function speakingFirst<T extends SwappableSettings>(settings: T, text: string): T {
   const { context: _played, ...agent } = settings.agent;
   return { ...settings, agent: { ...agent, greeting: text } } as T;
+}
+
+/** For an agent reopened mid-call (French detected): it keeps the conversation so far. */
+export function withHistory<T extends SwappableSettings>(settings: T, turns: { role: string; content: string }[]): T {
+  const before = ((settings.agent.context as { messages?: object[] } | undefined)?.messages) ?? [];
+  const messages = [...before, ...turns.slice(-20).map((t) => ({
+    type: 'History' as const, role: t.role === 'caller' ? ('user' as const) : ('assistant' as const), content: t.content,
+  }))];
+  return { ...settings, agent: { ...settings.agent, context: { messages } } } as T;
 }
 
 export const NOT_HUSSEIN_FUNCTION = {

@@ -16,6 +16,7 @@ import {
   claimedOwnerSettings,
   COMMAND_GREETING,
   BACK_TO_MESSAGE_GREETING,
+  withHistory,
 } from '../src/services/agentPrompt';
 
 loadEnv();
@@ -32,6 +33,9 @@ const cases: [string, unknown][] = [
   ['mid-call owner switch (OpenAI think)', claimedOwnerSettings(speakingFirst(buildCommandAgentSettings(key), COMMAND_GREETING))],
   ['mid-call owner switch (Claude think)', claimedOwnerSettings(speakingFirst(buildCommandAgentSettingsWithClaude(key, 'x'), COMMAND_GREETING))],
   ['mid-call back to message (Claude think)', speakingFirst(buildAgentSettingsWithClaude(key, 'x'), BACK_TO_MESSAGE_GREETING)],
+  // French detected mid-call: French voice + listening, conversation so far as history.
+  ['mid-call switch to French (Claude think)', withHistory(buildAgentSettingsWithClaude(key, 'x', { contact: null, recentCalls: [], language: 'fr' }),
+    [{ role: 'caller', content: 'Hello, is Hussein there?' }, { role: 'assistant', content: "He's tied up right now!" }])],
 ];
 
 function probe(label: string, settings: unknown): Promise<boolean> {
