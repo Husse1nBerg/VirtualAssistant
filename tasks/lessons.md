@@ -65,3 +65,14 @@
 **Root cause**: Commit 104bd99 (#9) dropped all agent audio from `UserStartedSpeaking` until `AgentStartedSpeaking`. I shipped it assuming `AgentStartedSpeaking` arrives before each reply's audio; Deepgram's docs never state that, I knew it, and shipped anyway. On this call the gate never reopened, so every reply was discarded. Tests passed because they encoded my assumption, not Deepgram's behavior.
 **Rule**: Never gate or drop the agent's audio on an event whose ordering isn't documented or observed in a real call log. Anything that can silence the agent needs live evidence first, and must fail open: a missed event must never mean permanent silence.
 **Example**: Reverted #9. `UserStartedSpeaking` and `AgentStartedSpeaking` now log at info, so the next call's Render log shows the real event order before any further barge-in change.
+
+## [2026-10-26] Built the wrong thing: a calendar reader when the owner wanted a channel to his Grok bots
+**What happened**: Asked to "link Grok so it texts me my agenda", I designed and built a calendar reader (iCal links + Grok API to word the text). The owner corrected me twice: he runs his life through Grok Bot (several bots in its app) and wants Sky as a two-way voice/text front end to them; and then that email as the trigger was too slow.
+**Root cause**: I mapped "Grok" to the model API I knew, not to the product he uses, and started building before asking what Grok already does for him. I also asked the user to check app settings that public docs could answer.
+**Rule**: When a user names a product they "use", find out what it does for them before designing around it, and research its integration surface (docs.x.ai, cursor.com/help) first. Prefer the fastest documented trigger (webhook) over a convenient one (email).
+**Example**: Grok Bot routines take a Webhook trigger (POST, `Authorization: Bearer <key>`, JSON body passed to the run; 200 = run started; 200 runs/hour/routine) and connect to remote MCP servers. Sky now starts routines by webhook and exposes `/connector/mcp` for the answers.
+
+## [2026-10-26] Committed with a failing test, and lost a regex backslash to shell escaping
+**What happened**: `vitest ... | grep ... && git commit` committed with 1 failing test: grep succeeded, so the chain carried on. The failure was a PIN-masking regex whose `\s` lost its backslash through Python-in-bash escaping (`'[\s.,-]*'` in a JS string is `[s.,-]*`), so spoken PINs like "4 3 2 1" were not masked.
+**Rule**: Gate commits on the test runner's own exit code, never on a pipe. Write regex sources with String.raw (or edit with the editor tool) rather than through layered shell quoting.
+**Example**: `npx vitest run > log 2>&1; [ $? -eq 0 ] || exit 1`. `new RegExp(String.raw\`(?<!\d)\` + digits)`.

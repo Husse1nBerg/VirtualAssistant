@@ -23,6 +23,14 @@
       Twilio number is not a WhatsApp sender). Harmless but noisy — either unset
       OWNER_WHATSAPP_NUMBER on Render or enable the WhatsApp sender. Owner's call.
 
+- [ ] Grok Bot link (feat/grok-bot-link). Owner, in Grok Bot: (1) on the "grok bot" (and any
+      sub-bot he wants to address directly) create a routine with a Webhook trigger; copy its
+      "POST to" URL and key into GROK_BOTS on Render. (2) Add Sky as a custom MCP server:
+      https://virtual-assistant-d38g.onrender.com/connector/mcp with header
+      Authorization: Bearer <BOT_CONNECTOR_SECRET>. (3) Allow Sky's tools in the bot's approval
+      rules. (4) 7:00 routine: set_today_schedule + text_hussein. Then test: text Sky
+      "tell grok to <something small>" and wait for the answer text. Close feat/daily-agenda.
+
 ## Completed
 
 ### 2026-10-09 — Combined MMS arriving minutes late

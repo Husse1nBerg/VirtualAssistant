@@ -26,6 +26,7 @@ import { sendPostSmsNotifications } from './notification';
 import type { CallSummary } from './claude';
 import { v4 as uuidv4 } from 'uuid';
 import { buildCallerContextBlock } from './agentPrompt';
+import { isOwnerNumber, handleOwnerText, maskPin } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -120,11 +121,20 @@ function extractSummaryFromReply(reply: string): { text: string; summary: SmsSum
 export async function handleIncomingSms(
   fromNumber: string,
   body: string,
-  toNumber: string
+  toNumber: string,
+  photoUrls: string[] = [],
 ): Promise<string> {
   const log = getLogger();
   const env = getEnv();
   pruneExpiredSessions();
+
+  // Hussein texting his own assistant: "agenda", or a command for one of his Grok bots.
+  // Anything else from him falls through to the normal message-taking flow, as before.
+  if (isOwnerNumber(fromNumber)) {
+    const reply = await handleOwnerText(body, photoUrls);
+    if (reply) return reply;
+    body = maskPin(body); // not a bridge command: keep any PIN out of the saved transcript
+  }
 
   // Check if this texter already has a session
   let session = sessions.get(fromNumber);

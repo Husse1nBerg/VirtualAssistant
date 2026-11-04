@@ -3,6 +3,7 @@ import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { updateNotificationByMessageId } from '../services/database';
 import { handleIncomingSms } from '../services/smsBrain';
+import { maskPin } from '../services/grokBridge';
 
 const router = Router();
 
@@ -16,8 +17,11 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
   const from = req.body.From as string;
   const to = req.body.To as string;
   const body = (req.body.Body as string || '').trim();
+  // MMS: Twilio sends NumMedia and MediaUrl0..N.
+  const photoUrls = Array.from({ length: Math.min(Number(req.body.NumMedia) || 0, 10) }, (_, i) => req.body[`MediaUrl${i}`])
+    .filter((u): u is string => typeof u === 'string' && u.startsWith('https://'));
 
-  log.info({ requestId: req.requestId, from, to, body: body.slice(0, 80) }, 'Inbound SMS received');
+  log.info({ requestId: req.requestId, from, to, body: maskPin(body).slice(0, 80), photos: photoUrls.length }, 'Inbound SMS received');
 
   // Return TwiML <Response><Message> to reply to the sender
   res.type('text/xml');
@@ -27,7 +31,7 @@ router.post('/inbound', twilioWebhookAuth, async (req: Request, res: Response) =
   }
 
   try {
-    const reply = await handleIncomingSms(from, body, to);
+    const reply = await handleIncomingSms(from, body, to, photoUrls);
     return res.send(
       `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`
     );

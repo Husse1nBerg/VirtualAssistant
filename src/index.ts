@@ -12,6 +12,7 @@ import voiceRoutes from './routes/voice';
 import smsRoutes from './routes/sms';
 import healthRoutes from './routes/health';
 import dashboardRoutes from './routes/dashboard';
+import connectorRoutes from './routes/connector';
 import { handleMediaStreamConnection } from './services/callOrchestrator';
 import { getPrisma, disconnectDb } from './services/database';
 import { startRetentionScheduler, stopRetentionScheduler } from './services/retention';
@@ -49,13 +50,16 @@ async function main() {
 
   // Parse URL-encoded bodies (Twilio webhooks)
   app.use(express.urlencoded({ extended: false }));
-  app.use(express.json());
+  // The connector parses its own (larger) JSON bodies, after checking the secret.
+  const json = express.json();
+  app.use((req, res, next) => (req.path.startsWith('/connector') ? next() : json(req, res, next)));
 
   // Rate limiting: cap paid-API abuse (Deepgram/Claude) and dashboard token guessing.
   const webhookLimiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false });
   const dashboardLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
   app.use('/voice', webhookLimiter);
   app.use('/sms', webhookLimiter);
+  app.use('/connector', webhookLimiter);
   app.use('/dashboard', dashboardLimiter);
 
   // Request ID middleware
@@ -73,6 +77,7 @@ async function main() {
   app.use('/voice', voiceRoutes);
   app.use('/sms', smsRoutes);
   app.use('/dashboard', dashboardRoutes);
+  app.use('/connector', connectorRoutes);
 
   // ── HTTP + WebSocket Server ────────────────────
 

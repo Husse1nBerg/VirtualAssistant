@@ -1,8 +1,12 @@
 import { z } from 'zod';
 
+// An empty dashboard value means "not set": fall back to the default.
+const blankToUndef = (v: unknown) => (v === '' ? undefined : v);
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Defaults to production so Twilio signature checks are never skipped by omission.
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
   BASE_URL: z.string().url(),
 
   // Twilio
@@ -42,6 +46,22 @@ const envSchema = z.object({
 
   // Data retention (delete call logs older than N days; 0 = disabled)
   DATA_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
+
+  // Grok Bot link. Sky starts a bot's routine through its webhook; the bot answers through
+  // Sky's connector (POST /connector/mcp, Bearer BOT_CONNECTOR_SECRET).
+  // GROK_BOTS is JSON, one entry per bot, copied from each routine's Webhook section:
+  //   {"grok bot": {"url": "https://...", "key": "crsr_..."}, "planner": {"url": "...", "key": "..."}}
+  // Names match case-insensitively; GROK_DEFAULT_BOT gets commands that name no bot.
+  GROK_BOTS: z.preprocess(blankToUndef, z.string().default('{}')),
+  GROK_DEFAULT_BOT: z.preprocess(blankToUndef, z.string().default('grok bot')),
+  BOT_CONNECTOR_SECRET: z.string().default('').refine((v) => v === '' || v.length >= 32, 'BOT_CONNECTOR_SECRET must be at least 32 characters'), // empty = connector disabled
+  OWNER_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
+  // Second factor for owner powers (bots, schedule, texting contacts): caller ID and SMS sender
+  // can be spoofed. Empty = those features stay off. 6-8 digits so 5 guesses an hour can't find it.
+  OWNER_PIN: z.string().default('').refine(
+    (v) => v === '' || /^\d{6,8}$/.test(v) || (v.trim().split(/\s+/).length >= 2 && v.replace(/[^a-z]/gi, '').length >= 8),
+    'OWNER_PIN must be 6 to 8 digits, or a passphrase of at least two words (8+ letters)',
+  ),
 
   // Logging
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
