@@ -15,26 +15,32 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { deliverReply, textOwner, setSchedule, pendingRequests } from '../services/grokBridge';
 import { hostPhotos, getPhoto, PhotoError, MAX_PHOTOS } from '../services/mediaStore';
+import { addMessage, takeCodes } from '../services/otpInbox';
 
 const router = Router();
 
-/** Bearer check in constant time. No secret configured = the connector does not exist (404). */
-export function connectorAuth(req: Request, res: Response, next: NextFunction): void {
-  const secret = getEnv().BOT_CONNECTOR_SECRET;
-  if (!secret) {
-    res.sendStatus(404);
-    return;
-  }
-  const given = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-  const a = Buffer.from(given);
-  const b = Buffer.from(secret);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    getLogger().warn({ requestId: req.requestId }, 'Connector: rejected request with a bad secret');
-    res.status(401).json({ error: 'unauthorized' });
-    return;
-  }
-  next();
+/** Bearer check in constant time. No secret configured = the endpoint does not exist (404). */
+function bearerAuth(secretOf: () => string, label: string) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const secret = secretOf();
+    if (!secret) {
+      res.sendStatus(404);
+      return;
+    }
+    const given = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const a = Buffer.from(given);
+    const b = Buffer.from(secret);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      getLogger().warn({ requestId: req.requestId }, `${label}: rejected request with a bad secret`);
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    next();
+  };
 }
+
+export const connectorAuth = bearerAuth(() => getEnv().BOT_CONNECTOR_SECRET, 'Connector');
+const smsForwardAuth = bearerAuth(() => getEnv().SMS_FORWARD_SECRET, 'SMS forward');
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 
@@ -94,6 +100,23 @@ export function buildConnectorServer(): McpServer {
   );
 
   server.registerTool(
+    'get_latest_code',
+    {
+      description:
+        "A one-time code just texted to Hussein's phone (his iPhone forwards them to Sky). Call it after a site sends him a verification code. " +
+        'Optionally pass a word to match the service or sender (e.g. "amazon"). Codes are kept 10 minutes and each can be read once; Hussein is texted whenever one is read.',
+      inputSchema: { from: z.string().max(60).optional() },
+    },
+    async ({ from }) => {
+      const codes = takeCodes(from ?? '');
+      if (!codes.length) return text('No new one-time code in the last 10 minutes. Wait a few seconds after the site sends it, then try again.');
+      const sources = [...new Set(codes.map((c) => c.from))].join(', ');
+      textOwner(`Sky: Grok Bot just read your one-time code (from ${sources}). If that wasn't you, secure that account.`).catch(() => {});
+      return text(JSON.stringify(codes));
+    },
+  );
+
+  server.registerTool(
     'get_pending_requests',
     {
       description: 'List requests Hussein sent through Sky in the last 24 hours that have not been answered yet.',
@@ -128,6 +151,17 @@ router.get('/media/:id', (req: Request, res: Response) => {
   const photo = getPhoto(req.params.id as string);
   if (!photo) return void res.sendStatus(404);
   res.set({ 'Content-Type': photo.type, 'Cache-Control': 'private, max-age=86400' }).send(photo.data);
+});
+
+// His iPhone (Shortcuts: "When I get a message containing 'code'") forwards the text here.
+// Only a code found in it is kept; the text and code are never logged.
+router.post('/sms-code', smsForwardAuth, express.json({ limit: '10kb' }), express.text({ limit: '10kb', type: 'text/*' }), (req: Request, res: Response) => {
+  const body = req.body as unknown;
+  const text = typeof body === 'string' ? body : typeof (body as { text?: unknown })?.text === 'string' ? (body as { text: string }).text : '';
+  const from = typeof (body as { from?: unknown })?.from === 'string' ? (body as { from: string }).from : '';
+  const kept = addMessage(from, text);
+  getLogger().info({ requestId: req.requestId, kept }, 'SMS forward: message received');
+  res.json({ ok: true, kept });
 });
 
 // Stateless servers have no event stream or session to end.

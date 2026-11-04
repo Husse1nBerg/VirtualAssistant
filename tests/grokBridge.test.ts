@@ -121,7 +121,7 @@ describe('Sky connector (what Grok Bot plugs into)', () => {
       requestInit: { headers: { Authorization: 'Bearer connector-secret-0123456789abcdef0123456789' } },
     }));
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['get_pending_requests', 'reply_to_hussein', 'set_today_schedule', 'text_hussein']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['get_latest_code', 'get_pending_requests', 'reply_to_hussein', 'set_today_schedule', 'text_hussein']);
     const result = await client.callTool({ name: 'get_pending_requests', arguments: {} });
     expect(result.content).toEqual([{ type: 'text', text: '[]' }]);
     await client.close();
