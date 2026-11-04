@@ -57,10 +57,10 @@ const envSchema = z.object({
   BOT_CONNECTOR_SECRET: z.string().default('').refine((v) => v === '' || v.length >= 32, 'BOT_CONNECTOR_SECRET must be at least 32 characters'), // empty = connector disabled
   OWNER_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
   // Second factor for owner powers (bots, schedule, texting contacts): caller ID and SMS sender
-  // can be spoofed. Empty = those features stay off. 6-8 digits so 5 guesses an hour can't find it.
+  // can be spoofed. Empty = those features stay off. PINs under 6 digits get a 24-hour lockout instead of 1 hour.
   OWNER_PIN: z.string().default('').refine(
-    (v) => v === '' || /^\d{6,8}$/.test(v) || (v.trim().split(/\s+/).length >= 2 && v.replace(/[^a-z]/gi, '').length >= 8),
-    'OWNER_PIN must be 6 to 8 digits, or a passphrase of at least two words (8+ letters)',
+    (v) => v === '' || /^\d{3,8}$/.test(v) || (v.trim().split(/\s+/).length >= 2 && v.replace(/[^a-z]/gi, '').length >= 8),
+    'OWNER_PIN must be 3 to 8 digits, or a passphrase of at least two words (8+ letters)',
   ),
 
   // Logging

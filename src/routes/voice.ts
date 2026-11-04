@@ -5,6 +5,7 @@ import { getEnv } from '../config';
 import { getLogger } from '../utils/logger';
 import { twilioWebhookAuth } from '../middleware/twilioAuth';
 import { createCallLog, getCallLogBySid, getCallLogById, updateCallLog, getContactByPhone, markSummarySent } from '../services/database';
+import { COMMAND_CALL_REASON } from '../services/callOrchestrator';
 import { sendRecordingOnlyNotification, sendSummaryOnlyFromCallLog, sendCombinedCallNotification, sendEscalationSMS } from '../services/notification';
 import { getGreetingText, pickGreetingIndex, getTtsModel, getElevenLabsVoiceId, ELEVENLABS_MODEL_ID } from '../services/agentPrompt';
 import { getTwilioClient } from '../services/twilioClient';
@@ -281,6 +282,11 @@ router.post('/recording-status', twilioWebhookAuth, async (req: Request, res: Re
     const callLog = await getCallLogBySid(callSid);
     if (callLog) {
       await updateCallLog(callLog.id, { recordingSid, recordingUrl });
+      // His own command calls are not messages for him: nothing to text.
+      if (callLog.reasonForCall === COMMAND_CALL_REASON) {
+        log.info({ callSid }, 'Owner call: no message notification');
+        return res.sendStatus(200);
+      }
       // Ack Twilio now (15s webhook timeout); the prefetch below can take a few seconds
       // on a fresh recording and nothing after this point needs the response.
       res.sendStatus(200);
