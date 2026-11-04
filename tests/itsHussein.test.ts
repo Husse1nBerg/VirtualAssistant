@@ -122,7 +122,7 @@ describe('call: "it\'s Hussein" from another phone', () => {
 
   it('recognises how speech-to-text spells his name, and nothing else', async () => {
     const { claimsToBeOwner } = await import('../src/services/grokBridge');
-    for (const t of ["It's Hussein.", 'this is Hussain', 'Hey, it’s Husein', 'Hussein here', "I'm Hussein, can you hear me?"]) expect(claimsToBeOwner(t), t).toBe(true);
+    for (const t of ["C'est Houssein", "It's Hocine", 'Ussene here', "It's Hussein.", 'this is Hussain', 'Hey, it’s Husein', 'Hussein here', "I'm Hussein, can you hear me?"]) expect(claimsToBeOwner(t), t).toBe(true);
     for (const t of ['Is this Hussein?', "I'm calling for Hussein", "It's Hussein's friend", 'Hussein said to call', 'Can I speak to Hussein'])
       expect(claimsToBeOwner(t), t).toBe(false);
   });
