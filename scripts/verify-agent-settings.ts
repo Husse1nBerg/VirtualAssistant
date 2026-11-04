@@ -12,6 +12,10 @@ import {
   buildAgentSettingsWithClaude,
   buildCommandAgentSettings,
   buildCommandAgentSettingsWithClaude,
+  speakingFirst,
+  claimedOwnerSettings,
+  COMMAND_GREETING,
+  BACK_TO_MESSAGE_GREETING,
 } from '../src/services/agentPrompt';
 
 loadEnv();
@@ -24,6 +28,10 @@ const cases: [string, unknown][] = [
   ['caller / unknown (Claude think)', buildAgentSettingsWithClaude(key, 'x')],
   ['command mode (OpenAI think)', buildCommandAgentSettings(key)],
   ['command mode (Claude think)', buildCommandAgentSettingsWithClaude(key, 'x')],
+  // "It's Hussein" mid-call swaps: the new agent speaks first (agent.greeting), no replayed history.
+  ['mid-call owner switch (OpenAI think)', claimedOwnerSettings(speakingFirst(buildCommandAgentSettings(key), COMMAND_GREETING))],
+  ['mid-call owner switch (Claude think)', claimedOwnerSettings(speakingFirst(buildCommandAgentSettingsWithClaude(key, 'x'), COMMAND_GREETING))],
+  ['mid-call back to message (Claude think)', speakingFirst(buildAgentSettingsWithClaude(key, 'x'), BACK_TO_MESSAGE_GREETING)],
 ];
 
 function probe(label: string, settings: unknown): Promise<boolean> {

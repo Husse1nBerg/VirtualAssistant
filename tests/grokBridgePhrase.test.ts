@@ -42,8 +42,8 @@ describe('passphrase instead of a numeric PIN', () => {
 
   it('works at the start of a text', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
+    expect(await handleOwnerText('tell grok to say hello')).toBe('Hi Hussein. Text your passphrase to continue.');
     expect(await handleOwnerText('Blue falcon river tell grok to say hello')).toBe("Sent to grok bot. I'll text you its answer.");
-    expect(await handleOwnerText('tell grok to say hello')).toContain('Start bot commands with your PIN or passphrase');
   });
 
   it('is hidden in transcripts', async () => {
