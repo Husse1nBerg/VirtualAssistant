@@ -355,6 +355,7 @@ export function checkPin(given: unknown, channel: PinChannel, now = Date.now()):
 export function resetPinFailuresForTests(): void {
   pinFailures.call = [];
   pinFailures.sms = [];
+  smsSessions.clear();
 }
 
 /** Hide the owner's PIN in logs and saved transcripts, however it was spaced or dashed,
@@ -378,16 +379,92 @@ export function maskPin(text: string): string {
   return text.replace(new RegExp(String.raw`(?<!\d)` + digits + String.raw`(?!\d)`, 'gi'), '[PIN]');
 }
 
-/** The owner's bridge texts. Returns the reply, or null to fall through to the normal SMS flow. */
-export async function handleOwnerText(rawBody: string, photoUrls: string[] = []): Promise<string | null> {
-  // Bridge texts start with the PIN: "123456 tell planner to move gym to 7".
-  const lead = splitLeadingSecret(rawBody);
-  const parsed = parseOwnerText(lead ? lead.rest : rawBody, [...botDirectory().keys()]);
-  if (!parsed) return null;
-  const result = checkPin(lead?.secret, 'sms');
-  if (result === 'not-set') return 'Bot commands are off until a PIN is set on Sky.';
-  if (result === 'locked') return `Bot commands by text are locked for ${pinLockLength()} after repeated wrong PINs.`;
-  if (result !== 'ok') return 'Start bot commands with your PIN or passphrase, then the command.';
+// ── "It's Hussein": owner mode by text ───────────────────────────────────────
+
+// STT and thumbs spell his name many ways. "Hussein's friend" and "is this Hussein?" are not him.
+const HIS_NAME = String.raw`(?:hussein|hussain|husein|husain|hussien|husayn|hossein|hosein)`;
+const CLAIM = new RegExp(
+  String.raw`(?:\b(?:it'?s|it is|this is|i'?m|i am)\s+${HIS_NAME}|^\s*${HIS_NAME}\s+(?:here|speaking))\b(?!'s)`,
+  'i',
+);
+export function claimsToBeOwner(text: string): boolean {
+  return CLAIM.test(text.replace(/\u2019/g, "'"));
+}
+
+const ADMIN_SESSION_MS = 15 * 60_000; // sliding; a spoofed text inside this window needs no PIN
+const PIN_REPLY_MS = 5 * 60_000;
+// ponytail: in memory, per sending number; a restart just asks for the PIN again.
+const smsSessions = new Map<string, { adminUntil?: number; pinUntil?: number; pending?: string; photos?: string[] }>();
+
+/** Every text, before the stranger flow. Returns Sky's reply, or null for "not for the owner path".
+ *  His own number never gets the stranger routine; any number can say "it's Hussein" and give the PIN.
+ *  Once the PIN is right, texts are commands without the PIN for ADMIN_SESSION_MS. */
+export async function handleOwnerText(
+  rawBody: string,
+  photoUrls: string[] = [],
+  from: string = getEnv().OWNER_PHONE_NUMBER,
+  now = Date.now(),
+): Promise<string | null> {
+  const key = allDigits(from);
+  const owner = isOwnerNumber(from);
+  const s = smsSessions.get(key) ?? {};
+  const body = rawBody.trim();
+  const bots = [...botDirectory().keys()];
+
+  if ((s.adminUntil ?? 0) > now) {
+    if (/^(?:lock|log ?out|bye|done)[.!]?$/i.test(body)) {
+      smsSessions.delete(key);
+      return "Locked. Text \"it's Hussein\" when you need me again.";
+    }
+    s.adminUntil = now + ADMIN_SESSION_MS;
+    return adminCommand(body, photoUrls);
+  }
+
+  // A PIN-led command from his own phone: "123456 tell planner to move gym to 7".
+  const lead = owner ? splitLeadingSecret(body) : null;
+  if (lead && parseOwnerText(lead.rest, bots)) {
+    const refused = pinGate(checkPin(lead.secret, 'sms'));
+    if (refused) return refused;
+    smsSessions.set(key, { adminUntil: now + ADMIN_SESSION_MS });
+    return adminCommand(lead.rest, photoUrls);
+  }
+
+  // His answer after Sky asked for the PIN.
+  if ((s.pinUntil ?? 0) > now && looksLikeSecret(body)) {
+    const result = checkPin(body, 'sms');
+    if (result === 'wrong') return `That didn't match. Text your ${secretName()} again.`;
+    const refused = pinGate(result);
+    if (refused) {
+      smsSessions.delete(key);
+      return refused;
+    }
+    smsSessions.set(key, { adminUntil: now + ADMIN_SESSION_MS });
+    if (s.pending) return adminCommand(s.pending, s.photos ?? []);
+    return 'Hi Hussein, what can I do for you?';
+  }
+
+  // "It's Hussein" from any phone, or anything else from his own: ask for the PIN, and keep a
+  // command he already typed so it runs once he gives it.
+  if (owner || claimsToBeOwner(body)) {
+    if (!getEnv().OWNER_PIN) return 'Owner commands are off until a PIN is set on Sky.';
+    const pending = parseOwnerText(body, bots) ? body : undefined;
+    smsSessions.set(key, { pinUntil: now + PIN_REPLY_MS, pending, photos: pending ? photoUrls : undefined });
+    return `Hi Hussein. Text your ${secretName()} to continue.`;
+  }
+  return null;
+}
+
+function pinGate(result: PinResult): string | null {
+  if (result === 'ok') return null;
+  if (result === 'not-set') return 'Owner commands are off until a PIN is set on Sky.';
+  if (result === 'locked') return `Owner commands by text are locked for ${pinLockLength()} after repeated wrong PINs.`;
+  return `Start with your ${secretName()}, then the command.`;
+}
+
+/** A text from Hussein once he is verified: "agenda", a named bot, or anything else for his main bot. */
+async function adminCommand(body: string, photoUrls: string[]): Promise<string> {
+  const parsed = parseOwnerText(body, [...botDirectory().keys()]) ?? (body ? { kind: 'relay' as const, command: body } : null);
+  if (!parsed) return 'Hi Hussein, what can I do for you?';
   if (parsed.kind === 'schedule') return describeSchedule();
   try {
     // Re-hosted so the bot can open them without Twilio's credentials.

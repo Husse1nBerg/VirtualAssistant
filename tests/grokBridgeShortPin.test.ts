@@ -31,8 +31,8 @@ beforeEach(async () => {
 describe('a 3-digit PIN', () => {
   it('starts a bot command by text', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
+    expect(await handleOwnerText('738 tell grok to say hello')).toBe('Start with your PIN, then the command.');
     expect(await handleOwnerText('739 tell grok to say hello')).toBe("Sent to grok bot. I'll text you its answer.");
-    expect(await handleOwnerText('738 tell grok to say hello')).toContain('Start bot commands with your PIN');
   });
 
   it('works spoken on a call, and Sky calls it a PIN', async () => {

@@ -130,11 +130,11 @@ export async function handleIncomingSms(
 
   // Hussein texting his own assistant: "agenda", or a command for one of his Grok bots.
   // Anything else from him falls through to the normal message-taking flow, as before.
-  if (isOwnerNumber(fromNumber)) {
-    const reply = await handleOwnerText(body, photoUrls);
-    if (reply) return reply;
-    body = maskPin(body); // not a bridge command: keep any PIN out of the saved transcript
-  }
+  // Hussein (his own number, or "it's Hussein" plus his PIN from any phone) never gets the
+  // message-taking routine below.
+  const ownerReply = await handleOwnerText(body, photoUrls, fromNumber);
+  if (ownerReply) return ownerReply;
+  if (isOwnerNumber(fromNumber)) body = maskPin(body);
 
   // Check if this texter already has a session
   let session = sessions.get(fromNumber);

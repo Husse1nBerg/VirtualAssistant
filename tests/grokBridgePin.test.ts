@@ -30,22 +30,22 @@ beforeEach(async () => {
 });
 
 describe('owner texts with a PIN set', () => {
-  it('relays only when the text starts with the PIN', async () => {
+  it('relays only once the PIN is right', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
+    expect(await handleOwnerText('grok, remind me at 6')).toBe('Hi Hussein. Text your PIN to continue.');
+    expect(await handleOwnerText('111111 grok, remind me at 6')).toBe('Start with your PIN, then the command.');
     expect(await handleOwnerText('654321 grok, remind me at 6')).toBe("Sent to grok bot. I'll text you its answer.");
-    expect(await handleOwnerText('grok, remind me at 6')).toContain('Start bot commands with your PIN or passphrase');
-    expect(await handleOwnerText('111111 grok, remind me at 6')).toContain('Start bot commands with your PIN or passphrase');
   });
 
   it('guards the schedule too', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
-    expect(await handleOwnerText('agenda')).toContain('Start bot commands with your PIN or passphrase');
+    expect(await handleOwnerText('agenda')).toBe('Hi Hussein. Text your PIN to continue.');
     expect(await handleOwnerText('654321 agenda')).toBe('9:30 standup');
   });
 
-  it('leaves ordinary texts alone', async () => {
+  it('never gives his own number the stranger routine', async () => {
     const { handleOwnerText } = await import('../src/services/grokBridge');
-    expect(await handleOwnerText('hey, call me back')).toBeNull();
+    expect(await handleOwnerText('hey, call me back')).toBe('Hi Hussein. Text your PIN to continue.');
   });
 
   it('masks the PIN in transcripts however the digits were written', async () => {

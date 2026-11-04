@@ -657,7 +657,41 @@ export function buildAgentSettingsWithClaude(_deepgramApiKey: string, anthropicA
 
 // ── Command mode (owner voice commands) ───────────────
 
-const COMMAND_GREETING = 'Hi Hussein, what can I do for you?';
+export const COMMAND_GREETING = 'Hi Hussein, what can I do for you?';
+export const BACK_TO_MESSAGE_GREETING = 'No problem. What would you like me to pass along to Hussein?';
+
+// ── Mid-call switches ("it's Hussein" on a call from another phone) ──────────
+
+interface SwappableSettings { agent: { think: { prompt: string; functions: readonly object[] }; context?: unknown } }
+
+/** For an agent opened mid-call: it says `text` first, instead of assuming the pre-call greeting just played. */
+export function speakingFirst<T extends SwappableSettings>(settings: T, text: string): T {
+  const { context: _played, ...agent } = settings.agent;
+  return { ...settings, agent: { ...agent, greeting: text } } as T;
+}
+
+export const NOT_HUSSEIN_FUNCTION = {
+  name: 'not_hussein',
+  description: 'The caller says they are not Hussein, or wants to leave Hussein a message. Sky goes back to taking a message.',
+  parameters: { type: 'object' as const, properties: {} },
+};
+
+/** The owner agent for a caller on another phone who said "it's Hussein": same PIN-gated powers,
+ *  plus a way back to message-taking for someone who is not him (Hussein is a common name). */
+export function claimedOwnerSettings<T extends SwappableSettings>(settings: T): T {
+  const think = settings.agent.think;
+  return {
+    ...settings,
+    agent: {
+      ...settings.agent,
+      think: {
+        ...think,
+        prompt: `${think.prompt}\nThis call is not from his phone: the caller said "it's Hussein". Treat them as Hussein; his PIN still guards every action. If they say they are not Hussein, or want to leave Hussein a message, call not_hussein.`,
+        functions: [...think.functions, NOT_HUSSEIN_FUNCTION],
+      },
+    },
+  } as T;
+}
 
 function commandPrompt(): string {
   const env = getEnv();
