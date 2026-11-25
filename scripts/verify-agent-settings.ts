@@ -37,6 +37,9 @@ const cases: [string, unknown][] = [
   // French detected mid-call: French voice + listening, conversation so far as history.
   ['mid-call switch to French (Claude think)', withHistory(buildAgentSettingsWithClaude(key, 'x', { contact: null, recentCalls: [], language: 'fr' }),
     [{ role: 'caller', content: 'Hello, is Hussein there?' }, { role: 'assistant', content: "He's tied up right now!" }])],
+  // A French contact asks for English mid-call: English voice + listening, French turns as history.
+  ['mid-call switch back to English (OpenAI think)', withHistory(buildAgentSettings(key, { ...frContact, language: 'en' }),
+    [{ role: 'caller', content: 'Oui, bonjour.' }, { role: 'assistant', content: 'Bonjour!' }, { role: 'caller', content: 'On va parler en anglais.' }])],
 ];
 
 function probe(label: string, settings: unknown): Promise<boolean> {

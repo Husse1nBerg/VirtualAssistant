@@ -100,7 +100,7 @@ function languageOverride(lang: string): string {
 
 // Common French words that are not also everyday English words (no "a", "on", "son"...).
 const FRENCH_WORDS = new Set([
-  'je', 'j', 'tu', 'vous', 'nous', 'il', 'elle', 'est', 'c', 'suis', 'oui', 'pas', 'pour', 'avec', 'mais',
+  'je', 'tu', 'vous', 'nous', 'il', 'elle', 'est', 'suis', 'oui', 'pas', 'pour', 'avec', 'mais',
   'merci', 'bonjour', 'bonsoir', 'salut', 'le', 'les', 'des', 'une', 'du', 'au', 'aux', 'que', 'qui', 'quoi',
   'ça', 'ca', 'mon', 'ma', 'mes', 'votre', 'vos', 'dans', 'très', 'aussi', 'voudrais', 'veux', 'peux',
   'parler', 'rappeler', 'demain', 'aujourd', 'hui', 'cette', 'et', 'est-ce', 'dois', 'peut', 'être', 'été',
@@ -109,13 +109,46 @@ const FRENCH_WORDS = new Set([
 const FRENCH_OPENERS = new Set(['bonjour', 'bonsoir', 'salut']);
 
 /** Is the caller speaking French? Two or more French words making up a good share of what they said,
- *  or an opening "bonjour". Never switches on a lone ambiguous word. */
+ *  or an opening "bonjour". Never switches on a lone ambiguous word: an elision belongs to its word
+ *  ("c'est" is one word, not "c" + "est"), so noise heard as "C'est" does not count as two. */
 export function looksFrench(text: string): boolean {
-  const words = text.toLowerCase().split(/[^a-zà-ÿ-]+/).filter(Boolean);
+  const words = text.toLowerCase().replace(/\b(?:[cdjlmnst]|qu)['’]/g, '').split(/[^a-zà-ÿ-]+/).filter(Boolean);
   if (!words.length) return false;
   if (words.length <= 3 && FRENCH_OPENERS.has(words[0])) return true;
-  const hits = words.filter((w) => FRENCH_WORDS.has(w)).length;
-  return hits >= 2 && hits * 3 >= words.length;
+  const hits = words.filter((w) => FRENCH_WORDS.has(w));
+  // Two different French words: the same noise heard twice ("C'est. C'est.") is still one.
+  return new Set(hits).size >= 2 && hits.length * 3 >= words.length;
+}
+
+// ponytail: phrase match, not understanding. It needs a verb about speaking ("speak English", "parler
+// en anglais") or a short stand-alone request ("in English please"): a language merely mentioned
+// ("text Julio in French", "le contrat est en anglais") is not a request. Widen if a real call asks another way.
+const LANGUAGE_WORDS = { en: 'english|anglais', fr: 'french|fran[cç]ais' } as const;
+const speaking = (l: string) => new RegExp(String.raw`\b(?:(?:speak(?:ing|s)?|talk(?:ing)?|continue[rz]?|switch|parl[a-z]+)(?:-(?:vous|tu))?\s+(?:(?:to|with) me\s+)?(?:(?:in|to|en)\s+)?|back to\s+)(?:${l})\b(\s*,?\s+(?:or|ou)\s)?`, 'gi');
+const standAlone = (l: string) => new RegExp(String.raw`^(?:(?:in|en)\s+(?:${l})\b|(?:${l})\s+(?:please|s['’]il|svp)\b)`, 'i');
+const NOT_WANTED = /\b(?:not|never|pas|jamais|learn\w*|appren\w*)\b|n['’]t\b/i;
+const WANTS_IT_STOPPED = /\b(?:stop\w*|why|pourquoi|arr[êe]t\w*)\b/i;
+
+/** The caller asks outright for English or French, in either language ("speak English", "on va parler
+ *  en anglais", "vous parlez français?", "in English please"). The three words before the phrase decide
+ *  what it means: a negation ("I don't want to speak French") asks for nothing, "stop / why are you
+ *  speaking French" asks for the other one. "English or French?" is a question, not a choice.
+ *  null unless exactly one language is asked for. */
+export function requestedLanguage(text: string): 'en' | 'fr' | null {
+  const wanted = new Set<'en' | 'fr'>();
+  for (const lang of ['en', 'fr'] as const) {
+    for (const m of text.matchAll(speaking(LANGUAGE_WORDS[lang]))) {
+      if (m[1]) continue;
+      const lead = text.slice(0, m.index).split(/[,.;:!?]/).pop()!.trim().split(/\s+/).slice(-3).join(' ');
+      if (NOT_WANTED.test(lead)) continue;
+      wanted.add(WANTS_IT_STOPPED.test(lead) ? (lang === 'en' ? 'fr' : 'en') : lang);
+    }
+    const other = new RegExp(LANGUAGE_WORDS[lang === 'en' ? 'fr' : 'en'], 'i');
+    const short = text.replace(/,\s*(?=please|s['’]il|svp)/gi, ' ').split(/[,.;:!?]+/).map((c) => c.trim())
+      .some((c) => c.split(/\s+/).length <= 5 && !other.test(c) && standAlone(LANGUAGE_WORDS[lang]).test(c));
+    if (short) wanted.add(lang);
+  }
+  return wanted.size === 1 ? [...wanted][0] : null;
 }
 
 export function buildCallerContextBlock(
@@ -322,7 +355,7 @@ If the caller gives their name AND reason in one go ("Hi, this is Mark, I'm call
 ANSWER THE QUESTION — CRITICAL
 - When the caller asks you something, answer THAT first, directly, the way a person would. Never answer a question with a summary of their request.
 - "Is he available?" / "Is he there?" / "Can I talk to him?" → a plain, natural no, then offer to help. Vary it: "He's tied up at the moment — want me to pass something along?", "Not right now, unfortunately! Can I take a message?", "He can't pick up right now, but I'll make sure he gets this."
-- "Is he free next Thursday at six?" / "Does he have time next week?" → say a quick "One sec, let me check his schedule!" and call check_availability with the time they asked about. Say what it returns, naturally. Never promise or book the slot: he confirms himself.
+- "Is he free next Thursday at six?" / "Does he have time next week?" → call check_availability right away, without saying anything first, with the day and time they asked about (if they only give a time, use the day you were already discussing). Never say you are checking, or that you will check, without calling it in that same turn. Say what it returns, naturally. Never promise or book the slot: he confirms himself.
 - A question you can't answer ("What food does he like?") → say so lightly and keep the conversation going: "Ha, good question — I don't know his favourites, but I'll ask him to suggest a spot!" Don't go silent and don't pivot to "anything else?".
 - People complain when an assistant just recites back what they said. Engage with what they said instead.
 
@@ -422,11 +455,11 @@ export const AGENT_FUNCTIONS = [
   {
     name: 'check_availability',
     description:
-      "Whether Hussein looks free at a time the caller asks about (\"is he free next Thursday at 6?\"). Say a quick \"One sec, let me check his schedule!\" first. The result is a sentence to say to the caller; it never reveals what his plans are.",
+      "Whether Hussein looks free at a time the caller asks about (\"is he free next Thursday at 6?\"). Call it right away, without saying anything first: saying you are checking does not check anything. The result is a sentence to say to the caller, in Montreal time; it never reveals what his plans are.",
     parameters: {
       type: 'object' as const,
       properties: {
-        when: { type: 'string', description: 'The day and time the caller asked about, in their words (e.g. "next Thursday at 6pm").' },
+        when: { type: 'string', description: 'The day and time the caller asked about, always with the day (e.g. "next Thursday at 6pm"). If they only said a time, add the day you were already discussing ("tomorrow at 8pm Swedish time").' },
       },
       required: ['when'],
     },

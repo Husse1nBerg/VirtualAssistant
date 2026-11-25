@@ -65,3 +65,35 @@ v1 Aura speak models without stating an incompatibility, but this is worth confi
 live since it changes the STT model actually processing calls in production.
 
 **Full write-up**: see tasks/lessons.md 2026-09-23 entries.
+
+# Task: Call 39f41cde — unanswered availability check, stuck French voice
+Date: 2026-11-23
+Status: complete (not committed, not deployed)
+
+## Plan
+- [x] Availability: call check_availability with no filler first; `when` always carries the day; lookup errors still answer (agentPrompt.ts, grokBridge.ts)
+- [x] Language: `switchToFrench` -> `switchLanguage`; outright request ("in English" / "en anglais" / "parlez français") switches and holds for the call (callOrchestrator.ts, agentPrompt.ts)
+- [x] False trigger: lone "C'est" no longer counts as two French words (agentPrompt.ts)
+- [x] Verify: vitest, tsc, scripts/verify-agent-settings.ts
+
+## Results
+98/98 tests, tsc clean, 11/11 Settings payloads accepted by Deepgram (incl. new "switch back to English").
+Not verified: a real call. The model can still, in principle, skip the tool call; the instruction that caused it is gone.
+
+## Notes
+Availability answers are spoken as-is in Montreal time; a caller's other time zone ("Swedish time") is not converted.
+
+# Task: Review loop after every call over 30 seconds
+Date: 2026-11-24
+Status: complete (not committed, not deployed)
+
+## Plan
+- [x] `reviewCall` in grokBridge.ts: Haiku reads the call log, texts Hussein problems + proposed fixes, stays quiet on "OK"
+- [x] callOrchestrator.ts keeps a per-call `reviewLog` (turns, tool calls, voice switches) and calls `reviewCall` in `endCall`
+- [x] tests/callReview.test.ts
+
+## Results
+101/101 tests, tsc clean. Not verified on a real call. Proposals only: nothing edits Sky's prompt automatically.
+
+## Notes
+Needs ANTHROPIC_API_KEY on Render (already used for availability). His own admin calls are not reviewed (an unverified "it's Hussein" is). Findings are texted and logged ("Call review"), not stored in the DB.

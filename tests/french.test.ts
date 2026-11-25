@@ -65,6 +65,86 @@ describe('French is detected from what the caller says', () => {
     expect(looksFrench('je need to speak with vous')).toBe(true); // exactly one third
     for (const t of ['Hi, is Hussein available?', 'Merci', 'Le Château restaurant at six', 'OK, sounds good', 'I want to have dinner with my son', 'okay bonjour there'])
       expect(looksFrench(t), t).toBe(false);
+    // Call 39f41cde (Nov 23): restaurant noise heard as "C'est" switched an English call to French.
+    for (const t of ["C'est", "C’est.", "J'ai"]) expect(looksFrench(t), t).toBe(false);
+    expect(looksFrench("C'est ça, oui")).toBe(true);
+  });
+
+  it('hears an outright request for English or French, in either language', async () => {
+    const { requestedLanguage } = await import('../src/services/agentPrompt');
+    for (const t of ['On va parler anglais, on va parler en anglais.', 'Ok, parce que tu peux parler en anglais, on ne parle pas le français.',
+      'Can we continue in English please?', 'Speak English', 'Can you speak English or French? Speak English.'])
+      expect(requestedLanguage(t), t).toBe('en');
+    for (const t of ['Oh, vous parlez français', 'Can you speak French?', 'En francais, s’il vous plaît'])
+      expect(requestedLanguage(t), t).toBe('fr');
+    for (const t of ["I don't speak English", 'Pas en anglais', 'Do you speak Swedish', 'English or French, in English or in French?', 'He has an English class',
+      "I don't want to speak in French", 'Je ne veux pas parler en anglais', 'Can you speak English or French?', 'Vous parlez français ou anglais?',
+      // A language merely mentioned is not a request (review of PR #29).
+      'Text Julio in French that I will be late', 'My daughter is in French immersion and I am calling about tutoring',
+      'Le contrat est en anglais', 'Can he call me back in English', 'My son is learning to speak French'])
+      expect(requestedLanguage(t), t).toBe(null);
+    // The way back, however it is put: no punctuation, a complaint, or two words.
+    for (const t of ["I don't understand you can you speak English please", 'I do not speak French so speak English',
+      'Why are you speaking French?', 'Stop speaking French', 'Arrêtez de parler en français', 'English please', 'No French. In English.'])
+      expect(requestedLanguage(t), t).toBe('en');
+    expect(requestedLanguage('Parlez-vous français?')).toBe('fr');
+    expect(requestedLanguage('French, please')).toBe('fr');
+    expect(requestedLanguage('Can you speak English, or French?')).toBe(null);
+    const { looksFrench } = await import('../src/services/agentPrompt');
+    for (const t of ["C'est. C'est.", "C'est, c'est"]) expect(looksFrench(t), t).toBe(false);
+  });
+});
+
+describe('call: the caller asks to go back to English', () => {
+  it('reopens Sky with the English voice, and that choice holds for the rest of the call', async () => {
+    const { getTtsModel } = await import('../src/services/agentPrompt');
+    const s = await strangerCall();
+    await say(s, 'user', 'Oh, vous parlez français');
+    expect(h.agents).toHaveLength(2);
+    expect(h.agents[1].settings().agent.speak.provider.model).toBe(getTtsModel('fr'));
+
+    await say(s, 'user', 'On va parler anglais, on va parler en anglais.');
+    expect(h.agents).toHaveLength(3);
+    expect(h.agents[1].readyState).toBe(3);
+    const en = h.agents[2];
+    const settings = en.settings();
+    expect(settings.agent.speak.provider.model).toBe(getTtsModel('en')); // the English voice, not French reading English
+    expect(settings.agent.listen.provider.language_hints[0]).toBe('en');
+    expect(h.agents[1].settings().agent.think.prompt).toContain('preferred language is French');
+    expect(settings.agent.think.prompt).not.toContain('preferred language is');
+    expect(settings.agent.context.messages.map((m: { content: string }) => m.content)).toContain('Oh, vous parlez français');
+    en.emit({ type: 'SettingsApplied' });
+    expect(en.sent.map((m) => JSON.parse(m))).toContainEqual({ type: 'InjectUserMessage', content: 'On va parler anglais, on va parler en anglais.' });
+
+    // He said it again, in French: still English, no flip back.
+    await say(s, 'user', 'Ok, parce que tu peux parler en anglais, on ne parle pas le français.');
+    await say(s, 'user', 'Oui merci, je vous remercie.');
+    expect(h.agents).toHaveLength(3);
+    expect(s.ended).toBe(false);
+  });
+
+  it('a saved French contact can ask for English too', async () => {
+    const { getTtsModel } = await import('../src/services/agentPrompt');
+    const s = await strangerCall();
+    s.callerCtx = { contact: { name: 'Nada', language: 'fr', isVip: false }, recentCalls: [] };
+    await say(s, 'user', 'Can we speak English today?');
+    expect(h.agents).toHaveLength(2);
+    const settings = h.agents[1].settings();
+    expect(settings.agent.speak.provider.model).toBe(getTtsModel('en'));
+    expect(settings.agent.think.prompt).not.toContain('preferred language is');
+  });
+
+  it("Sky's own question echoed back as the caller's does not switch anything", async () => {
+    const s = await strangerCall();
+    await say(s, 'assistant', 'Would you prefer to speak French?');
+    await say(s, 'user', 'Would you prefer to speak French?');
+    expect(h.agents).toHaveLength(1);
+  });
+
+  it('a lone "C\'est" does not switch anything', async () => {
+    const s = await strangerCall();
+    await say(s, 'user', "C'est");
+    expect(h.agents).toHaveLength(1);
   });
 });
 

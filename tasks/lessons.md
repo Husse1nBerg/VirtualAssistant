@@ -76,3 +76,9 @@
 **What happened**: `vitest ... | grep ... && git commit` committed with 1 failing test: grep succeeded, so the chain carried on. The failure was a PIN-masking regex whose `\s` lost its backslash through Python-in-bash escaping (`'[\s.,-]*'` in a JS string is `[s.,-]*`), so spoken PINs like "4 3 2 1" were not masked.
 **Rule**: Gate commits on the test runner's own exit code, never on a pipe. Write regex sources with String.raw (or edit with the editor tool) rather than through layered shell quoting.
 **Example**: `npx vitest run > log 2>&1; [ $? -eq 0 ] || exit 1`. `new RegExp(String.raw\`(?<!\d)\` + digits)`.
+
+## [2026-11-23] "Say one sec, then call the function" produced the words and no call
+**What happened**: Call 39f41cde: asked about "eight o'clock Swedish time", Sky said "I'll need to check his schedule... One second!" three times and never answered. Render logs show no `check_availability` call at 20:41:04 (the earlier one at 20:39:24 did call). Same call: restaurant noise heard as "C'est" switched the call to French, and "on va parler en anglais" could not switch it back, so English was read by the French voice.
+**Root cause**: (1) The prompt and the tool description told the model to speak a filler line before calling the tool; a model that has produced text can end its turn there. (2) `looksFrench` split "c'est" into "c" + "est" and counted two French words. (3) The language switch was one-way (`!session.language` shut detection off for good).
+**Rule**: Never instruct the model to announce a tool call before making it: tool first, words after. Tokenise French elisions as one word. Any mid-call mode switch needs a way back, driven by the caller's own words, not by the model agreeing in text.
+**Example**: `tests/availability.test.ts` ("is called straight away"), `tests/french.test.ts` ("asks to go back to English", lone "C'est"). Render logs: grep the callId for `Agent function call` next to the "checking" line.
