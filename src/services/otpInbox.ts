@@ -49,9 +49,12 @@ export function addMessage(from: string, text: string, now = Date.now()): boolea
 export function takeCodes(filter = '', now = Date.now()): Code[] {
   prune(now);
   const want = filter.trim().toLowerCase();
-  const taken = inbox.filter((c) => !want || `${c.from} ${c.text}`.toLowerCase().includes(want));
+  const match = inbox.filter((c) => !want || `${c.from} ${c.text}`.toLowerCase().includes(want)).sort((a, b) => b.at - a.at);
+  // Without a word to match, only the newest: asking for "the code" must not also hand out (and burn)
+  // a bank code that arrived in the same ten minutes.
+  const taken = want ? match : match.slice(0, 1);
   inbox = inbox.filter((c) => !taken.includes(c));
-  return taken.sort((a, b) => b.at - a.at);
+  return taken;
 }
 
 export function putBack(codes: Code[]): void {
