@@ -15,6 +15,7 @@ import {
   BACK_TO_MESSAGE_GREETING_FR,
   withHistory,
   looksFrench,
+  requestedLanguage,
 } from './agentPrompt';
 import {
   createCallLog,
@@ -32,7 +33,7 @@ import { getTwilioClient } from './twilioClient';
 import { verifyStreamToken } from '../utils/streamToken';
 import type { CallSummary } from './claude';
 import { computeUrgency } from './urgency';
-import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, secretName, pinLockLength, claimsToBeOwner, availabilityAnswer, frenchSpeech, BridgeError } from './grokBridge';
+import { relayToBot, describeSchedule, spokenSchedule, onLiveOwnerCall, checkPin, maskPin, looksLikeSecret, secretName, pinLockLength, claimsToBeOwner, availabilityAnswer, frenchSpeech, BridgeError, reviewCall } from './grokBridge';
 
 // ── Types ────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ interface CallSession {
   ownerClaimed?: boolean;   // a caller on another phone said "it's Hussein" (switched to the owner agent)
   callerCtx?: CallerContext; // to reopen the message-taking agent if a claimed caller is not Hussein
   language?: string;        // 'fr' once Sky switched to French for this caller
+  reviewLog?: string[];     // what was said and what Sky did, for the review after the call
   injected?: string;        // a caller line re-sent to a new agent: not recorded twice
 }
 
@@ -290,14 +292,15 @@ export function switchAgent(session: CallSession, to: 'owner' | 'stranger'): voi
   if (old && old.readyState !== WebSocket.CLOSED) old.close(1000, 'Switching agent');
 }
 
-/** The caller (or Hussein, on an owner call) speaks French: reopen the live agent in French (voice,
- *  listening, replies), the way a saved French contact gets it from the start. It keeps the
- *  conversation so far and answers what they just said. */
-export function switchToFrench(session: CallSession, said: string): void {
+/** The caller (or Hussein, on an owner call) speaks French, or asks for English or French: reopen
+ *  the live agent in that language (voice, listening, replies), the way a saved contact gets it from
+ *  the start. It keeps the conversation so far and answers what they just said. */
+export function switchLanguage(session: CallSession, lang: 'en' | 'fr', said: string): void {
   if (session.ended) return;
-  getLogger().info({ callId: session.callId }, 'French detected — switching Sky to French');
-  session.language = 'fr';
-  session.callerCtx = { ...(session.callerCtx ?? { contact: null, recentCalls: [] }), language: 'fr' };
+  getLogger().info({ callId: session.callId, to: lang }, 'Switching Sky to another language');
+  session.language = lang;
+  (session.reviewLog ??= []).push(`[voice switched to ${lang}]`);
+  session.callerCtx = { ...(session.callerCtx ?? { contact: null, recentCalls: [] }), language: lang };
   if (session.twilioWs.readyState === WebSocket.OPEN) {
     session.twilioWs.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
   }
@@ -306,15 +309,15 @@ export function switchToFrench(session: CallSession, said: string): void {
   // Owner agent for an owner call (claimed ones keep not_hussein); message-taking agent otherwise.
   const original = session.isCommandMode ? (session.ownerClaimed ? null : ownerSettings()) : strangerSettings({ ...session.callerCtx, language: undefined });
   const heard = (original?.agent as { context?: { messages?: object[] } } | undefined)?.context?.messages ?? [];
-  const french = session.isCommandMode
-    ? (session.ownerClaimed ? claimedOwnerSettings(ownerSettings('fr')) : ownerSettings('fr'))
+  const next = session.isCommandMode
+    ? (session.ownerClaimed ? claimedOwnerSettings(ownerSettings(lang)) : ownerSettings(lang))
     : strangerSettings(session.callerCtx);
   const history = session.transcriptParts.slice(0, -1); // the last line is what we re-send below
-  openAgent(session, withHistory(french, history, heard), (ws) => {
+  openAgent(session, withHistory(next, history, heard), (ws) => {
     session.injected = said;
     ws.send(JSON.stringify({ type: 'InjectUserMessage', content: said }));
   });
-  if (old && old.readyState !== WebSocket.CLOSED) old.close(1000, 'Switching to French');
+  if (old && old.readyState !== WebSocket.CLOSED) old.close(1000, 'Switching language');
 }
 
 // ── Handle Deepgram Agent Events ─────────────────────
@@ -352,11 +355,21 @@ export function handleAgentEvent(session: CallSession, event: any): void {
       // "It's Hussein" on a call from another phone: stop taking a message and become his assistant.
       // His PIN still guards every action, as on calls from his own phone.
       const claimed = role === 'user' && !session.isCommandMode && claimsToBeOwner(raw);
-      const toFrench = !claimed && role === 'user' && !session.language &&
-        (session.callerCtx?.contact?.language ?? 'en') !== 'fr' && looksFrench(raw);
+      // Language: an outright request ("in English please") always wins and holds for the rest of the
+      // call; French merely heard switches once, and never after the caller has chosen. Otherwise the
+      // request itself, said in French ("on va parler en anglais"), would flip the call straight back.
+      const current = session.language ?? session.callerCtx?.contact?.language ?? 'en';
+      // Sky's own line echoed back as the caller's ("Would you prefer to speak French?") is not a request.
+      const said = raw.trim().toLowerCase();
+      const callers = !claimed && role === 'user' &&
+        !session.transcriptParts.slice(-4).some((p) => p.role === 'assistant' && p.content.trim().toLowerCase() === said);
+      const asked = callers ? requestedLanguage(raw) : null;
+      const heardFrench = callers && !session.language && current !== 'fr' && looksFrench(raw);
+      const toLang = asked ?? (heardFrench ? 'fr' : null);
 
       if (content) {
         log.info({ callId: session.callId, role, content }, 'Conversation turn');
+        (session.reviewLog ??= []).push(`${role === 'user' ? 'Caller' : 'Sky'}: ${content}`);
         session.transcriptParts.push({
           role: role === 'user' ? 'caller' : 'assistant',
           content,
@@ -370,7 +383,8 @@ export function handleAgentEvent(session: CallSession, event: any): void {
         ).catch((err) => log.error({ err }, 'Failed to save transcript'));
       }
       if (claimed) switchAgent(session, 'owner');
-      else if (toFrench) switchToFrench(session, raw);
+      else if (toLang && toLang !== current) switchLanguage(session, toLang, raw);
+      else if (asked) session.language = asked; // already in it: just hold it
       break;
     }
 
@@ -396,6 +410,7 @@ export function handleAgentEvent(session: CallSession, event: any): void {
 
         const { pin: _pin, ...loggable } = input;
         log.info({ callId: session.callId, functionName, functionCallId, clientSide, input: loggable, pinProvided: _pin != null }, 'Agent function call');
+        (session.reviewLog ??= []).push(`[tool call: ${functionName}]`); // the name only: arguments can hold a message or a number
 
         if (functionName === 'end_call_summary') {
           handleEndCallSummary(session, input, functionCallId, clientSide);
@@ -710,6 +725,9 @@ async function endCall(session: CallSession, status: string): Promise<void> {
   }
 
   const durationSeconds = Math.round((Date.now() - session.startTime) / 1000);
+  // Callers' calls only: his own admin calls carry his commands and texts. Not awaited: never delays the wrap-up.
+  // Same test as below: an unverified "it's Hussein" is still a stranger's call, and is reviewed.
+  if (!(session.isCommandMode && (!session.ownerClaimed || session.pinOk))) void reviewCall(session.callId, session.reviewLog ?? [], durationSeconds);
 
   try {
     // Owner call = his own number, or "it's Hussein" plus the right PIN. An unverified claim is

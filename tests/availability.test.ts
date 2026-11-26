@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 
-const h = vi.hoisted(() => ({ snapshot: null as null | { text: string; updatedAt: Date }, asked: [] as { system: string; content: string }[], reply: '' }));
+const h = vi.hoisted(() => ({ snapshot: null as null | { text: string; updatedAt: Date }, asked: [] as { system: string; content: string }[], reply: '', dbDown: false }));
 vi.mock('../src/services/database', () => ({
-  getPrisma: () => ({ daySnapshot: { findUnique: async () => h.snapshot } }),
+  getPrisma: () => ({ daySnapshot: { findUnique: async () => { if (h.dbDown) throw new Error('db down'); return h.snapshot; } } }),
 }));
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class {
@@ -62,5 +62,23 @@ describe('a caller asks "is he free next Thursday at 6?"', () => {
   it('is offered to callers, not just to Hussein', async () => {
     const { AGENT_FUNCTIONS } = await import('../src/services/agentPrompt');
     expect(AGENT_FUNCTIONS.map((f) => f.name)).toContain('check_availability');
+  });
+
+  // Call 39f41cde (Nov 23): told to say "One sec" first, Sky said it and never made the call.
+  it('is called straight away: nothing tells Sky to announce the check first', async () => {
+    const { AGENT_FUNCTIONS, getAgentPrompt } = await import('../src/services/agentPrompt');
+    const fn = AGENT_FUNCTIONS.find((f) => f.name === 'check_availability')!;
+    expect(fn.description + getAgentPrompt()).not.toMatch(/One sec/i);
+    expect(fn.description).toMatch(/without saying anything first/);
+    expect((fn.parameters.properties as { when: { description: string } }).when.description).toMatch(/always with the day/i);
+  });
+
+  it('still answers the caller when the lookup itself fails', async () => {
+    const { availabilityAnswer } = await import('../src/services/grokBridge');
+    h.dbDown = true;
+    try {
+      expect(await availabilityAnswer('tomorrow at 8')).toMatch(/don't have his calendar/);
+      expect(await availabilityAnswer('demain à 8 h', new Date(), 'fr')).toMatch(/pas encore son agenda/);
+    } finally { h.dbDown = false; }
   });
 });
