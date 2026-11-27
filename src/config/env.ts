@@ -55,6 +55,8 @@ const envSchema = z.object({
   GROK_BOTS: z.preprocess(blankToUndef, z.string().default('{}')),
   GROK_DEFAULT_BOT: z.preprocess(blankToUndef, z.string().default('grok bot')),
   BOT_CONNECTOR_SECRET: z.string().default('').refine((v) => v === '' || v.length >= 32, 'BOT_CONNECTOR_SECRET must be at least 32 characters'), // empty = connector disabled
+  // His iPhone forwards one-time-code texts to POST /connector/sms-code with this (not Grok's secret).
+  SMS_FORWARD_SECRET: z.string().default('').refine((v) => v === '' || v.length >= 32, 'SMS_FORWARD_SECRET must be at least 32 characters'), // empty = off
   OWNER_TIMEZONE: z.preprocess(blankToUndef, z.string().default('America/Toronto')),
   // Second factor for owner powers (bots, schedule, texting contacts): caller ID and SMS sender
   // can be spoofed. Empty = those features stay off. PINs under 6 digits get a 24-hour lockout instead of 1 hour.
@@ -67,6 +69,12 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 });
 
+// The phone's secret must differ from Grok's, or Grok's credential could also plant codes.
+const checkedEnvSchema = envSchema.refine(
+  (e) => !e.SMS_FORWARD_SECRET || e.SMS_FORWARD_SECRET !== e.BOT_CONNECTOR_SECRET,
+  { message: 'SMS_FORWARD_SECRET must be different from BOT_CONNECTOR_SECRET', path: ['SMS_FORWARD_SECRET'] },
+);
+
 export type Env = z.infer<typeof envSchema>;
 
 let _env: Env | null = null;
@@ -74,7 +82,7 @@ let _env: Env | null = null;
 export function loadEnv(): Env {
   if (_env) return _env;
 
-  const result = envSchema.safeParse(process.env);
+  const result = checkedEnvSchema.safeParse(process.env);
 
   if (!result.success) {
     console.error('❌ Invalid environment variables:');
